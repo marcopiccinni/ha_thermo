@@ -41,7 +41,6 @@ class ThermoEntity(CoordinatorEntity[ThermoCoordinator]):
             manufacturer="marcopiccinni",
             model="Zona termostato",
             sw_version=VERSION,
-            suggested_area=self.zone.name,
         )
 
     @property
