@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 
 from .const import (
     CARD_FILES,
@@ -71,6 +72,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ThermoConfigEntry) -> bo
     hass.data[DOMAIN]["manager"] = manager
     hass.data[DOMAIN]["entry_id"] = entry.entry_id
 
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=entry.title,
+        manufacturer="marcopiccinni",
+        model="HA Thermo",
+        sw_version=VERSION,
+    )
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
@@ -109,7 +119,8 @@ async def _async_register_cards(hass: HomeAssistant) -> None:
     except ImportError:  # pragma: no cover - frontend always present in HA
         return
 
-    if not _WWW.is_dir():
+    http = getattr(hass, "http", None)
+    if http is None or not _WWW.is_dir():
         return
 
     paths = []
@@ -126,13 +137,16 @@ async def _async_register_cards(hass: HomeAssistant) -> None:
         return
 
     try:
-        await hass.http.async_register_static_paths(paths)
+        await http.async_register_static_paths(paths)
     except (RuntimeError, ValueError):
         # Already registered (e.g. after a reload): safe to ignore.
         pass
 
     for url in urls:
-        add_extra_js_url(hass, url)
+        try:
+            add_extra_js_url(hass, url)
+        except (KeyError, RuntimeError):
+            _LOGGER.debug("Frontend not ready for %s", url)
 
 
 __all__ = ["CONF_NAME", "DOMAIN", "async_setup_entry"]

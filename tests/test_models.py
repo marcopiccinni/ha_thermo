@@ -124,3 +124,9 @@ def test_bypass_roundtrip() -> None:
 def test_slugify() -> None:
     assert slugify("Fuori casa (weekend)!") == "fuori_casa_weekend"
     assert slugify("***") == "profilo"
+
+
+def test_slugify_uses_fallback_for_empty_values() -> None:
+    assert slugify("", "attivatore") == "attivatore"
+    assert slugify("  !!!  ", "profilo") == "profilo"
+    assert slugify("Fuori casa") == "fuori_casa"

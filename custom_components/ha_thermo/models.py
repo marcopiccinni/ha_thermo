@@ -412,6 +412,6 @@ def _parse_datetime(value: Any) -> datetime:
         return datetime.now().astimezone()
 
 
-def slugify(value: str) -> str:
+def slugify(value: str, fallback: str = "profilo") -> str:
     """Return a stable identifier from a human name."""
-    return _slug(value)
+    return _slug(value, fallback)

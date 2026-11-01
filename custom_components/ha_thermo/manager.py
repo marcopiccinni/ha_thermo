@@ -218,7 +218,7 @@ class ThermoManager:
 
     def _notify(self) -> None:
         if self.coordinator is not None:
-            self.coordinator.async_request_refresh()
+            self.hass.async_create_task(self.coordinator.async_request_refresh())
 
     def _save(self) -> None:
         self._store.async_save(self._serialize())
