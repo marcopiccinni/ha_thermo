@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Ripristinato il metodo `_fire` mancante che causava l'errore "ThermoManager object has no attribute '_fire'" durante la configurazione iniziale.
+
 ## 0.2.0
 
 - **Tre card Lovelace separate**: `ha-thermo-card` (controlli), `ha-thermo-graph-card` (grafico 24h), `ha-thermo-manager-card` (gestione). Ogni card può essere configurata per un singolo termostato.
