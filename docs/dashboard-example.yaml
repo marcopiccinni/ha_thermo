@@ -1,0 +1,62 @@
+title: Clima
+views:
+  - title: Casa
+    path: casa
+    icon: mdi:home-thermometer
+    cards:
+      - type: custom:ha-thermo-card
+        title: Termostati
+        show_graph: true
+        bypass_minutes: 60
+        hold_minutes: 60
+
+      - type: custom:ha-thermo-manager-card
+        title: Gestione clima
+
+      - type: entities
+        title: Entità hub
+        entities:
+          - entity: switch.ha_thermo_controllo_automatico
+          - entity: select.ha_thermo_profilo
+          - entity: binary_sensor.ha_thermo_bypass_attivo
+
+      - type: grid
+        title: Scorciatoie
+        columns: 2
+        square: false
+        cards:
+          - type: button
+            name: Fuori casa
+            icon: mdi:home-export-outline
+            tap_action:
+              action: perform-action
+              perform_action: ha_thermo.set_profile
+              target: {}
+              data:
+                profile: fuori_casa
+          - type: button
+            name: Torna in auto
+            icon: mdi:auto-mode
+            tap_action:
+              action: perform-action
+              perform_action: ha_thermo.set_profile
+              target: {}
+              data:
+                profile: __auto__
+          - type: button
+            name: Bypass 2 ore
+            icon: mdi:shield-clock
+            tap_action:
+              action: perform-action
+              perform_action: ha_thermo.start_bypass
+              target: {}
+              data:
+                duration: 120
+          - type: button
+            name: Ferma bypass
+            icon: mdi:shield-off-outline
+            tap_action:
+              action: perform-action
+              perform_action: ha_thermo.stop_bypass
+              target: {}
+              data: {}

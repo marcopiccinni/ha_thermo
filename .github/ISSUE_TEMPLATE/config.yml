@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: README e documentazione
+    url: https://github.com/marcopiccinni/ha_thermo#readme
+    about: Configurazione, entità, servizi, card e dashboard di esempio.

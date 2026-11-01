@@ -1,0 +1,283 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HA Thermo",
+        "description": "Scegli i termostati da gestire. Potrai rinominare le zone, aggiungere sensori di temperatura e modificare i limiti dalle opzioni.",
+        "data": {
+          "name": "Nome",
+          "climate_entities": "Termostati"
+        }
+      }
+    },
+    "error": {
+      "no_entities": "Seleziona almeno un termostato."
+    },
+    "abort": {
+      "already_configured": "HA Thermo è già configurato."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni HA Thermo",
+        "description": "Configura il controllo automatico o gestisci le zone.",
+        "menu_options": {
+          "settings": "Impostazioni",
+          "zones": "Zone",
+          "finish": "Salva e chiudi"
+        }
+      },
+      "settings": {
+        "title": "Impostazioni",
+        "description": "Comportamento di hold e riasserzione. Le temperature predefinite sono usate quando vengono creati i profili iniziali.",
+        "data": {
+          "manual_hold": "Mantieni override manuale (minuti)",
+          "reassert_interval": "Intervallo di riasserzione (minuti)",
+          "scan_interval": "Intervallo di aggiornamento (secondi)",
+          "comfort_temp": "Temperatura predefinita Comfort",
+          "eco_temp": "Temperatura predefinita Eco",
+          "night_temp": "Temperatura predefinita Notte",
+          "away_temp": "Temperatura predefinita Fuori casa",
+          "summer_temp": "Temperatura predefinita Estate"
+        }
+      },
+      "zones": {
+        "title": "Zone",
+        "description": "Aggiungi, modifica o rimuovi una zona.",
+        "data": {
+          "zone_action": "Azione"
+        }
+      },
+      "zone_add": {
+        "title": "Aggiungi zona",
+        "description": "Una zona è un termostato e, opzionalmente, un sensore di temperatura dedicato.",
+        "data": {
+          "name": "Nome zona",
+          "climate_entity": "Termostato",
+          "temperature_sensor": "Sensore di temperatura (opzionale)",
+          "min_temp": "Temperatura minima",
+          "max_temp": "Temperatura massima",
+          "default_temp": "Temperatura di fallback"
+        }
+      },
+      "zone_edit": {
+        "title": "Modifica zona",
+        "description": "L'id interno della zona viene mantenuto, così profili e attivatori continuano a funzionare.",
+        "data": {
+          "name": "Nome zona",
+          "climate_entity": "Termostato",
+          "temperature_sensor": "Sensore di temperatura (opzionale)",
+          "min_temp": "Temperatura minima",
+          "max_temp": "Temperatura massima",
+          "default_temp": "Temperatura di fallback"
+        }
+      }
+    },
+    "error": {
+      "zone_name_required": "Inserisci un nome per la zona.",
+      "zone_invalid_climate": "Scegli un'entità climate.",
+      "zone_duplicate_climate": "Questo termostato è già usato da un'altra zona.",
+      "zone_invalid_limits": "La temperatura massima deve essere maggiore della minima."
+    }
+  },
+  "services": {
+    "set_profile": {
+      "name": "Imposta profilo",
+      "description": "Attiva un profilo su tutte le zone o su una selezione.",
+      "fields": {
+        "profile": {
+          "name": "Profilo",
+          "description": "Id o nome del profilo, oppure __auto__ per seguire gli attivatori."
+        },
+        "zones": {
+          "name": "Zone",
+          "description": "Id zona o entità climate. Vuoto significa tutte le zone."
+        },
+        "duration": {
+          "name": "Durata",
+          "description": "Durata opzionale in minuti o HH:MM."
+        }
+      }
+    },
+    "start_bypass": {
+      "name": "Avvia bypass",
+      "description": "Forza temporaneamente il target. Senza temperature/offset blocca il target corrente.",
+      "fields": {
+        "zones": {
+          "name": "Zone",
+          "description": "Id zona o entità climate. Vuoto significa tutte le zone."
+        },
+        "temperature": {
+          "name": "Temperatura",
+          "description": "Temperatura target assoluta."
+        },
+        "offset": {
+          "name": "Offset",
+          "description": "Scostamento rispetto al target del profilo."
+        },
+        "duration": {
+          "name": "Durata",
+          "description": "Minuti oppure HH:MM."
+        },
+        "until": {
+          "name": "Fino a",
+          "description": "Data/ora di fine assoluta (ISO 8601)."
+        },
+        "source": {
+          "name": "Origine",
+          "description": "Etichetta opzionale dell'origine del bypass."
+        }
+      }
+    },
+    "stop_bypass": {
+      "name": "Ferma bypass",
+      "description": "Annulla i bypass attivi, opzionalmente solo per alcune zone.",
+      "fields": {
+        "zones": {
+          "name": "Zone",
+          "description": "Id zona o entità climate. Vuoto significa tutte le zone."
+        }
+      }
+    },
+    "set_temperature": {
+      "name": "Imposta temperatura",
+      "description": "Imposta temporaneamente una temperatura assoluta tramite bypass.",
+      "fields": {
+        "zones": {
+          "name": "Zone",
+          "description": "Id zona o entità climate. Vuoto significa tutte le zone."
+        },
+        "temperature": {
+          "name": "Temperatura",
+          "description": "Temperatura target."
+        },
+        "duration": {
+          "name": "Durata",
+          "description": "Minuti oppure HH:MM."
+        }
+      }
+    },
+    "enable": {
+      "name": "Abilita controllo",
+      "description": "Abilita o disabilita il controllo automatico globale o per zona.",
+      "fields": {
+        "enabled": {
+          "name": "Abilitato"
+        },
+        "zones": {
+          "name": "Zone",
+          "description": "Id zona o entità climate. Vuoto significa tutte le zone."
+        }
+      }
+    },
+    "create_profile": {
+      "name": "Crea profilo",
+      "description": "Crea un profilo da un oggetto completo.",
+      "fields": {
+        "profile": {
+          "name": "Profilo"
+        }
+      }
+    },
+    "update_profile": {
+      "name": "Aggiorna profilo",
+      "description": "Aggiorna un profilo esistente da un oggetto completo.",
+      "fields": {
+        "profile": {
+          "name": "Profilo"
+        }
+      }
+    },
+    "delete_profile": {
+      "name": "Elimina profilo",
+      "description": "Elimina un profilo e gli attivatori che lo usano.",
+      "fields": {
+        "profile_id": {
+          "name": "Id profilo"
+        }
+      }
+    },
+    "clone_profile": {
+      "name": "Clona profilo",
+      "description": "Crea una copia indipendente di un profilo, opzionalmente limitata ad alcune zone.",
+      "fields": {
+        "source_id": {
+          "name": "Id profilo sorgente"
+        },
+        "name": {
+          "name": "Nome nuovo profilo"
+        },
+        "zones": {
+          "name": "Zone",
+          "description": "Id zone da copiare. Vuoto significa tutte le zone."
+        }
+      }
+    },
+    "create_activator": {
+      "name": "Crea attivatore",
+      "description": "Crea un attivatore da un oggetto completo.",
+      "fields": {
+        "activator": {
+          "name": "Attivatore"
+        }
+      }
+    },
+    "update_activator": {
+      "name": "Aggiorna attivatore",
+      "description": "Aggiorna un attivatore esistente da un oggetto completo.",
+      "fields": {
+        "activator": {
+          "name": "Attivatore"
+        }
+      }
+    },
+    "delete_activator": {
+      "name": "Elimina attivatore",
+      "description": "Elimina un attivatore.",
+      "fields": {
+        "activator_id": {
+          "name": "Id attivatore"
+        }
+      }
+    },
+    "reload": {
+      "name": "Ricarica",
+      "description": "Rivaluta profili e attivatori."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_temperature": {
+        "name": "Temperatura attuale"
+      },
+      "target_temperature": {
+        "name": "Temperatura target"
+      },
+      "next_change": {
+        "name": "Prossimo cambio"
+      },
+      "bypass_remaining": {
+        "name": "Bypass rimanente"
+      }
+    },
+    "binary_sensor": {
+      "bypass_active": {
+        "name": "Bypass attivo"
+      },
+      "override_active": {
+        "name": "Override manuale"
+      }
+    },
+    "select": {
+      "profile": {
+        "name": "Profilo"
+      }
+    },
+    "switch": {
+      "enabled": {
+        "name": "Controllo automatico"
+      }
+    }
+  }
+}

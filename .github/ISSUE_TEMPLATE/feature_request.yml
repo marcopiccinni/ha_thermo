@@ -1,0 +1,17 @@
+name: Feature request
+description: Proponi una nuova funzionalità
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Descrizione
+      description: Cosa vorresti aggiungere e perché.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative considerate
+    validations:
+      required: false

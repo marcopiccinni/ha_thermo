@@ -1,0 +1,93 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Local-only files (kept out of the repository)
+
+# Markdown instruction files
+AGENTS.md
+AGENTS.local.md
+AGENTS.override.md
+CLAUDE.md
+CLAUDE.local.md
+GEMINI.md
+GEMINI.local.md
+GROK.md
+CODEX.md
+COPILOT.md
+.gptignore
+.cursorrules
+.windsurfrules
+.clinerules
+.roorules
+.copilot-instructions.md
+
+# Config directories
+.opencode/
+.claude/
+.gemini/
+.grok/
+.codex/
+.cursor/
+.continue/
+.copilot/
+.roo/
+.cline/
+.kilo/
+.qodo/
+.windsurf/
+.zed/
+.devin/
+.augment/
+.auggie/
+.junie/
+.kiro/
+.amazonq/
+.goose/
+.openhands/
+.sweep/
+.plandex/
+.mentat/
+.marscode/
+.codeium/
+.supermaven/
+.tabnine/
+.cody/
+.bolt/
+.void/
+.trae/
+.swarm/
+.agents/
+.ai/
+.skills/
+
+# Other tooling file patterns
+.aider*
+
+# In-repo config paths
+.github/copilot-instructions.md
+.github/agents/
+.github/prompts/
+.github/instructions/
+
+# Local secrets (never commit Home Assistant tokens)
+.env
+*.long_lived_token

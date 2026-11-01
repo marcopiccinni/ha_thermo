@@ -1,0 +1,42 @@
+name: Bug report
+description: Segnala un problema con l'integrazione HA Thermo
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Grazie per il report. Includi sempre versione, configurazione delle zone
+        e i log rilevanti, senza token o dati personali.
+  - type: input
+    id: version
+    attributes:
+      label: Versione integrazione
+      description: Versione mostrata in HACS o nel manifest.
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Versione Home Assistant
+    validations:
+      required: true
+  - type: textarea
+    id: zones
+    attributes:
+      label: Zone e termostati
+      description: Elenca le entità climate usate e i profili/attivatori coinvolti.
+    validations:
+      required: false
+  - type: textarea
+    id: description
+    attributes:
+      label: Descrizione del problema
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log rilevanti
+      render: text
+    validations:
+      required: false
