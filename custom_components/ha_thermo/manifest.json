@@ -1,9 +1,17 @@
 {
   "domain": "ha_thermo",
   "name": "HA Thermo",
-  "codeowners": ["@marcopiccinni"],
+  "categories": [
+    "climate"
+  ],
+  "codeowners": [
+    "@marcopiccinni"
+  ],
   "config_flow": true,
-  "dependencies": ["frontend", "http"],
+  "dependencies": [
+    "frontend",
+    "http"
+  ],
   "documentation": "https://github.com/marcopiccinni/ha_thermo",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/marcopiccinni/ha_thermo/issues",
