@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Corretto il clone di profili e attivatori quando il nome è vuoto.
+- Corretto il refresh del coordinatore dopo le modifiche.
+- Il device hub viene creato prima delle zone, evitando il warning `via_device`.
+- Rimossa l'assegnazione automatica delle aree Home Assistant (`suggested_area`).
+
 ## 0.1.0
 
 Prima versione.

@@ -93,9 +93,9 @@ Le card vengono servite da `/ha_thermo/ha-thermo-card.js` e `/ha_thermo/ha-therm
 ```yaml
 lovelace:
   resources:
-    - url: /ha_thermo/ha-thermo-card.js?v=0.1.0
+    - url: /ha_thermo/ha-thermo-card.js?v=0.1.1
       type: module
-    - url: /ha_thermo/ha-thermo-manager-card.js?v=0.1.0
+    - url: /ha_thermo/ha-thermo-manager-card.js?v=0.1.1
       type: module
 ```
 
