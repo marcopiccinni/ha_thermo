@@ -1199,6 +1199,9 @@ class ThermoManager:
                 return zone
         return None
 
+    def _fire(self, event_type: str, data: dict[str, Any]) -> None:
+        self.hass.bus.async_fire(event_type, data)
+
     async def async_update_zone(
         self,
         zone_id: str,
