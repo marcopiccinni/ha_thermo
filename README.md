@@ -88,52 +88,92 @@ Gli id esatti dipendono dal nome assegnato da Home Assistant. Le card usano gli 
 
 ## Card Lovelace
 
-Le card vengono servite da `/ha_thermo/ha-thermo-card.js` e `/ha_thermo/ha-thermo-manager-card.js` e caricate automaticamente. Se usi la modalità YAML delle risorse, aggiungi:
+Le card vengono servite da `/ha_thermo/ha-thermo-card.js`, `/ha_thermo/ha-thermo-graph-card.js` e `/ha_thermo/ha-thermo-manager-card.js` e registrate automaticamente come risorse Lovelace (modalità storage) o caricate via `extra_js_url` (YAML). Non è necessario aggiungerle manualmente.
 
-```yaml
-lovelace:
-  resources:
-    - url: /ha_thermo/ha-thermo-card.js?v=0.1.1
-      type: module
-    - url: /ha_thermo/ha-thermo-manager-card.js?v=0.1.1
-      type: module
-```
+### Controlli (`ha-thermo-card`)
 
-### Panoramica
+Card per un singolo termostato con slider, profilo, bypass e stato.
 
 ```yaml
 type: custom:ha-thermo-card
-title: Termostati
-show_graph: true
+title: Studio
+zone: climate.studio
+show_graph: false
+show_slider: true
+show_profile: true
+show_bypass: true
+show_enable: true
+show_status: true
 bypass_minutes: 60
 hold_minutes: 60
 ```
 
-Opzioni:
+| Opzione | Default | Descrizione |
+| --- | --- | --- |
+| `title` | `Termostato` | Titolo della card (auto dal nome zona se vuoto). |
+| `zone` | — | Id zona, entità `climate` o nome. Se omesso e c'è una sola zona, viene usata quella. |
+| `show_graph` | `false` | Mostra il grafico 24h. |
+| `show_slider` | `true` | Mostra slider e pulsanti ±. |
+| `show_profile` | `true` | Mostra selettore profilo. |
+| `show_bypass` | `true` | Mostra pulsanti bypass. |
+| `show_enable` | `true` | Mostra pulsante Auto/Off. |
+| `show_status` | `true` | Mostra stato (prossimo cambio, bypass). |
+| `bypass_minutes` | `60` | Durata del bypass rapido. |
+| `hold_minutes` | `60` | Durata dell'override manuale. |
+
+### Grafico (`ha-thermo-graph-card`)
+
+Card con sola curva 24h, target e temperatura attuale.
+
+```yaml
+type: custom:ha-thermo-graph-card
+title: Grafico Studio
+zone: climate.studio
+height: 180
+show_legend: true
+show_target: true
+show_current: true
+show_profile: true
+show_next: true
+```
 
 | Opzione | Default | Descrizione |
 | --- | --- | --- |
-| `title` | `Termostati` | Titolo della card. |
-| `zone` | tutte | Id zona, entità climate o nome; accetta anche una lista. |
-| `show_graph` | `true` | Mostra la curva del giorno con target e temperatura attuale. |
-| `bypass_minutes` | `60` | Durata del pulsante bypass rapido. |
-| `hold_minutes` | `60` | Durata dell’override quando usi slider e pulsanti. |
+| `title` | `Grafico` | Titolo. |
+| `zone` | — | Come sopra. |
+| `height` | `180` | Altezza grafico in pixel. |
+| `show_legend` | `true` | Mostra legenda. |
+| `show_target` | `true` | Linea target. |
+| `show_current` | `true` | Linea temperatura attuale. |
+| `show_profile` | `true` | Nome profilo attivo. |
+| `show_next` | `true` | Prossimo cambio. |
 
-La card mostra temperatura attuale e target, curva del profilo attivo, slider, selettore profilo, bypass rapido e stato del prossimo cambio.
+### Manager (`ha-thermo-manager-card`)
 
-### Gestione
+Gestione profili, attivatori, zone e bypass. Può essere filtrata per zona.
 
 ```yaml
 type: custom:ha-thermo-manager-card
-title: HA Thermo Manager
+title: Gestione clima
+zone: all
+default_tab: zones
+tabs:
+  - zones
+  - profiles
+  - activators
+  - bypasses
+bypass_minutes: 60
 ```
 
-Quattro schede:
+| Opzione | Default | Descrizione |
+| --- | --- | --- |
+| `title` | `HA Thermo Manager` | Titolo. |
+| `zone` | `all` | Id zona, entità `climate`, nome o `all` per tutte. |
+| `default_tab` | `zones` | Tab iniziale (`zones`, `profiles`, `activators`, `bypasses`). |
+| `tabs` | tutte | Lista dei tab visibili. |
+| `bypass_minutes` | `60` | Durata predefinita bypass. |
 
-- **Zone**: stato, profilo, bypass rapido, abilitazione.
-- **Profili**: crea, modifica, clona ed elimina profili; editor delle 24 ore per giorno e zona.
-- **Attivatori**: crea e modifica regole con giorni, orari, priorità, zone e condizioni.
-- **Bypass**: elenco attivi, stop e avvio con temperatura, offset, freeze, durata o scadenza.
+**Nota migrazione**: le dashboard 0.1.x con `ha-thermo-card` senza `zone` mostreranno "Scegli il termostato". Duplica la card per ogni termostato impostando `zone`. La manager senza `zone` resta globale.
 
 Un esempio completo è in [`docs/dashboard-example.yaml`](docs/dashboard-example.yaml).
 

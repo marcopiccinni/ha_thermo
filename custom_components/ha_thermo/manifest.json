@@ -1,6 +1,9 @@
 {
   "domain": "ha_thermo",
   "name": "HA Thermo",
+  "after_dependencies": [
+    "lovelace"
+  ],
   "categories": [
     "climate"
   ],
@@ -17,5 +20,5 @@
   "issue_tracker": "https://github.com/marcopiccinni/ha_thermo/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.1.1"
+  "version": "0.2.0"
 }

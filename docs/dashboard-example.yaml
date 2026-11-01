@@ -4,14 +4,43 @@ views:
     path: casa
     icon: mdi:home-thermometer
     cards:
+      # Card controlli per ogni termostato
       - type: custom:ha-thermo-card
-        title: Termostati
+        title: Studio
+        zone: climate.studio
         show_graph: true
         bypass_minutes: 60
         hold_minutes: 60
 
+      - type: custom:ha-thermo-card
+        title: Camera
+        zone: climate.camera
+        show_graph: false
+        bypass_minutes: 45
+
+      # Card grafico dedicata
+      - type: custom:ha-thermo-graph-card
+        title: Grafico Studio
+        zone: climate.studio
+        height: 200
+        show_profile: true
+        show_next: true
+
+      # Manager globale
       - type: custom:ha-thermo-manager-card
         title: Gestione clima
+        zone: all
+        default_tab: zones
+
+      # Manager filtrata per una zona
+      - type: custom:ha-thermo-manager-card
+        title: Gestione Studio
+        zone: climate.studio
+        default_tab: profiles
+        tabs:
+          - profiles
+          - activators
+          - bypasses
 
       - type: entities
         title: Entità hub

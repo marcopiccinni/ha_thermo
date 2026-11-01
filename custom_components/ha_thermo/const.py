@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Final
 
 DOMAIN: Final = "ha_thermo"
-VERSION: Final = "0.1.1"
+VERSION: Final = "0.2.0"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = f"{DOMAIN}.state"
@@ -178,8 +178,13 @@ SERVICE_NAMES: Final[dict[str, str]] = {
 # Frontend cards
 # ---------------------------------------------------------------------------
 
+ASSET_FILES: Final[tuple[str, ...]] = (
+    "ha-thermo-common.js",
+)
+
 CARD_FILES: Final[tuple[str, ...]] = (
     "ha-thermo-card.js",
+    "ha-thermo-graph-card.js",
     "ha-thermo-manager-card.js",
 )
 
@@ -188,7 +193,8 @@ CARD_URLS: Final[tuple[str, ...]] = tuple(
 )
 
 CARD_NAMES: Final[dict[str, str]] = {
-    "ha-thermo-card": "HA Thermo",
+    "ha-thermo-card": "HA Thermo Controlli",
+    "ha-thermo-graph-card": "HA Thermo Grafico",
     "ha-thermo-manager-card": "HA Thermo Manager",
 }
 

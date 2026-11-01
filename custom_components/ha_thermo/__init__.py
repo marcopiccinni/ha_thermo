@@ -12,6 +12,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 
 from .const import (
+    ASSET_FILES,
     CARD_FILES,
     CONF_NAME,
     CONF_ZONES,
@@ -116,16 +117,18 @@ async def _async_register_cards(hass: HomeAssistant) -> None:
     try:
         from homeassistant.components.frontend import add_extra_js_url
         from homeassistant.components.http import StaticPathConfig
-    except ImportError:  # pragma: no cover - frontend always present in HA
+        from homeassistant.components.lovelace import LOVELACE_DATA, MODE_STORAGE
+    except ImportError:
         return
 
     http = getattr(hass, "http", None)
     if http is None or not _WWW.is_dir():
         return
 
+    all_files = list(ASSET_FILES) + list(CARD_FILES)
     paths = []
     urls = []
-    for name in CARD_FILES:
+    for name in all_files:
         file_path = _WWW / name
         if not file_path.is_file():
             continue
@@ -139,14 +142,68 @@ async def _async_register_cards(hass: HomeAssistant) -> None:
     try:
         await http.async_register_static_paths(paths)
     except (RuntimeError, ValueError):
-        # Already registered (e.g. after a reload): safe to ignore.
         pass
 
+    lovelace_data = getattr(hass.data.get(LOVELACE_DATA), "resource_mode", None) if LOVELACE_DATA in hass.data else None
+    if lovelace_data == MODE_STORAGE:
+        await _async_register_lovelace_resources(hass, urls)
+    else:
+        for url in urls:
+            try:
+                add_extra_js_url(hass, url)
+            except (KeyError, RuntimeError):
+                _LOGGER.debug("Frontend not ready for %s", url)
+
+
+async def _async_register_lovelace_resources(hass: HomeAssistant, urls: list[str]) -> None:
+    """Register card modules as persistent Lovelace resources (storage mode)."""
+    try:
+        from homeassistant.components.lovelace import LOVELACE_DATA
+        from homeassistant.components.lovelace.resources import (
+            ResourceStorageCollection,
+        )
+    except ImportError:
+        return
+
+    ll_data = hass.data.get(LOVELACE_DATA)
+    if not ll_data or not isinstance(ll_data.resources, ResourceStorageCollection):
+        return
+
+    resources = ll_data.resources
+    try:
+        await resources.async_get_info()
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+    existing = resources.async_items() or []
+    base_to_existing = {}
+    for res in existing:
+        url = res.get("url", "")
+        base = url.partition("?")[0]
+        if base.startswith(f"/{DOMAIN}/"):
+            base_to_existing[base] = res
+
     for url in urls:
+        base = url.partition("?")[0]
+        if base in base_to_existing:
+            res = base_to_existing[base]
+            if res.get("url") != url:
+                try:
+                    await resources.async_update_item(res["id"], {"res_type": "module", "url": url})
+                except Exception:  # noqa: BLE001, S110
+                    pass
+            base_to_existing.pop(base)
+        else:
+            try:
+                await resources.async_create_item({"res_type": "module", "url": url})
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+    for res in base_to_existing.values():
         try:
-            add_extra_js_url(hass, url)
-        except (KeyError, RuntimeError):
-            _LOGGER.debug("Frontend not ready for %s", url)
+            await resources.async_delete_item(res["id"])
+        except Exception:  # noqa: BLE001, S110
+            pass
 
 
 __all__ = ["CONF_NAME", "DOMAIN", "async_setup_entry"]

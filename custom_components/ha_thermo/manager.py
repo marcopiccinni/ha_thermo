@@ -1199,8 +1199,65 @@ class ThermoManager:
                 return zone
         return None
 
-    def _fire(self, event_type: str, data: dict[str, Any]) -> None:
-        self.hass.bus.async_fire(event_type, data)
+    async def async_update_zone(
+        self,
+        zone_id: str,
+        name: str | None = None,
+        climate_entity: str | None = None,
+        temperature_sensor: str | None = None,
+        min_temp: float | None = None,
+        max_temp: float | None = None,
+        default_temp: float | None = None,
+    ) -> None:
+        """Update zone settings and persist to config entry options."""
+        if zone_id not in self.zones:
+            raise ValueError("unknown_zone")
+        zone = self.zones[zone_id]
+
+        new_name = name if name is not None else zone.name
+        new_climate = climate_entity if climate_entity is not None else zone.climate_entity
+        new_sensor = temperature_sensor if temperature_sensor is not None else zone.temperature_sensor
+        new_min = min_temp if min_temp is not None else zone.min_temp
+        new_max = max_temp if max_temp is not None else zone.max_temp
+        new_default = default_temp if default_temp is not None else zone.default_temp
+
+        if not new_name.strip():
+            raise ValueError("zone_name_required")
+        if not new_climate or not new_climate.startswith("climate."):
+            raise ValueError("zone_invalid_climate")
+        if new_max <= new_min:
+            raise ValueError("zone_invalid_limits")
+
+        options = dict(self.entry.options)
+        zones_list = [dict(z) for z in options.get(CONF_ZONES, [])]
+        if not zones_list and self.entry.data.get(CONF_ZONES):
+            zones_list = [dict(z) for z in self.entry.data[CONF_ZONES]]
+
+        found = False
+        for z in zones_list:
+            if z.get("id") == zone_id:
+                z["name"] = new_name
+                z["climate_entity"] = new_climate
+                z["temperature_sensor"] = new_sensor
+                z["min_temp"] = float(new_min)
+                z["max_temp"] = float(new_max)
+                z["default_temp"] = float(new_default)
+                found = True
+                break
+
+        if not found:
+            zones_list.append({
+                "id": zone_id,
+                "name": new_name,
+                "climate_entity": new_climate,
+                "temperature_sensor": new_sensor,
+                "min_temp": float(new_min),
+                "max_temp": float(new_max),
+                "default_temp": float(new_default),
+            })
+
+        options[CONF_ZONES] = zones_list
+        self.hass.config_entries.async_update_entry(self.entry, options=options)
 
     async def async_reload(self) -> None:
         """Re-evaluate the current state."""

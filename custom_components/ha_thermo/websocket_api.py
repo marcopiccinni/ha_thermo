@@ -10,7 +10,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
-from .const import ATTR_ACTIVATOR_ID, ATTR_PROFILE_ID, DOMAIN
+from .const import ATTR_ACTIVATOR_ID, ATTR_PROFILE_ID, ATTR_ZONE_ID, DOMAIN
 from .manager import ThermoManager
 
 _ZONES = vol.Optional("zones")
@@ -362,6 +362,43 @@ async def _updated(awaitable: Awaitable[Any]) -> dict[str, Any]:
     return {"id": item.id, "item": item.to_dict()}
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/zone/update",
+        vol.Required(ATTR_ZONE_ID): cv.string,
+        vol.Optional("name"): cv.string,
+        vol.Optional("climate_entity"): cv.entity_id,
+        vol.Optional("temperature_sensor"): vol.Any(cv.entity_id, None),
+        vol.Optional("min_temp"): vol.Coerce(float),
+        vol.Optional("max_temp"): vol.Coerce(float),
+        vol.Optional("default_temp"): vol.Coerce(float),
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_update_zone(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    manager = _manager(hass, connection, msg)
+    if manager is None:
+        return
+    await _execute(
+        connection,
+        msg,
+        lambda: manager.async_update_zone(
+            zone_id=msg[ATTR_ZONE_ID],
+            name=msg.get("name"),
+            climate_entity=msg.get("climate_entity"),
+            temperature_sensor=msg.get("temperature_sensor"),
+            min_temp=msg.get("min_temp"),
+            max_temp=msg.get("max_temp"),
+            default_temp=msg.get("default_temp"),
+        ),
+    )
+
+
 COMMANDS = (
     ws_get_config,
     ws_set_profile,
@@ -376,6 +413,7 @@ COMMANDS = (
     ws_create_activator,
     ws_update_activator,
     ws_delete_activator,
+    ws_update_zone,
 )
 
 

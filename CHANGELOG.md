@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+- **Tre card Lovelace separate**: `ha-thermo-card` (controlli), `ha-thermo-graph-card` (grafico 24h), `ha-thermo-manager-card` (gestione). Ogni card può essere configurata per un singolo termostato.
+- **Card per termostato**: ogni istanza mostra un solo termostato; se non configurato, viene usato l'unico disponibile o mostrato un messaggio di configurazione.
+- **Editor visuale ricco**: selezione termostato da dropdown, titolo automatico, toggle per grafico/slider/profilo/bypass/enable/stato, durate bypass e override.
+- **Modifica impostazioni zona dalla matita**: nome, entità climate, sensore temperatura, min/max, temperatura default (solo admin). Le modifiche vengono salvate nelle opzioni della config entry e l'integrazione si ricarica automaticamente.
+- **Manager filtrata**: la card manager può essere limitata a una zona specifica oppure mostrare tutte le zone (default "Tutte" per compatibilità).
+- **Registrazione affidabile delle card**: le card vengono registrate come risorse Lovelace persistenti in modalità storage, con fallback per modalità YAML. Risolto il problema per cui le card non comparivano nel selettore.
+- **Suggerimenti nel card picker**: le card vengono suggerite quando si seleziona un'entità `climate`.
+- **Compatibilità**: le dashboard esistenti con `ha-thermo-card` senza `zone` mostreranno un messaggio "Scegli il termostato"; è necessario duplicare la card per ogni termostato. La manager senza `zone` resta globale. Il parametro `show_graph: true` sulla card controlli è supportato come modalità combinata deprecata.
+
 ## 0.1.1
 
 - Corretto il clone di profili e attivatori quando il nome è vuoto.
