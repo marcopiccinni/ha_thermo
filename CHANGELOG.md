@@ -48,3 +48,7 @@ Prima versione.
 ## 0.2.3
 
 - Corretto errore di sintassi JavaScript in ha-thermo-manager-card.js (parentesi mancante nell'editor).
+
+## 0.2.4
+
+- Corretto dropdown termostato duplicato negli editor delle card.

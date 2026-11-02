@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, DAY_KEYS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.2.3";
+import { DOMAIN, EVENT_TYPES, DAY_KEYS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.2.4";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -184,6 +184,8 @@ class HaThermoCardEditor extends HTMLElement {
   }
   _render() {
     const zoneOpts = getZoneOptions(this._zones, false);
+    const currentZone = this._config.zone || "";
+    const hasZone = this._zones.find(z => z.id === currentZone || z.climate_entity === currentZone);
     this.shadowRoot.innerHTML = `<style>
       .form{display:grid;gap:12px;padding:8px 0}
       label{display:grid;gap:4px;font-size:0.9rem}
@@ -193,7 +195,7 @@ class HaThermoCardEditor extends HTMLElement {
       legend{font-size:0.85rem;color:var(--secondary-text-color)}
     </style><div class="form">
       <label>Titolo<input type="text" data-field="title" value="${esc(this._config.title || "")}"></label>
-      <label>Termostato<select data-field="zone">${zoneOpts}<option value="${esc(this._config.zone || "")}" ${!this._zones.find(z=>z.id===this._config.zone)?'selected':''}>${esc(this._config.zone || "Scegli...")}</option></select></label>
+      <label>Termostato<select data-field="zone">${zoneOpts}</select></label>
       <fieldset><legend>Visualizzazione</legend>
         <label class="row"><input type="checkbox" data-field="show_graph" ${this._config.show_graph!==false?"checked":""}>Mostra grafico</label>
         <label class="row"><input type="checkbox" data-field="show_slider" ${this._config.show_slider!==false?"checked":""}>Mostra slider</label>

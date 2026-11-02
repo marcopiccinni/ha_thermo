@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, esc, formatTemp, formatTime, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.2.3";
+import { DOMAIN, EVENT_TYPES, esc, formatTemp, formatTime, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.2.4";
 
 class HaThermoGraphCard extends HTMLElement {
   constructor() {
@@ -73,6 +73,7 @@ class HaThermoGraphCardEditor extends HTMLElement {
   async _loadZones() { if (!this._hass) return; try { const data = await callWS(this._hass, { type: `${DOMAIN}/get_config` }); this._zones = data?.zones || []; } catch (e) {} this._render(); }
   _render() {
     const zoneOpts = getZoneOptions(this._zones, false);
+    const currentZone = this._config.zone || "";
     this.shadowRoot.innerHTML = `<style>
       .form{display:grid;gap:12px;padding:8px 0}
       label{display:grid;gap:4px;font-size:0.9rem}
@@ -82,7 +83,7 @@ class HaThermoGraphCardEditor extends HTMLElement {
       legend{font-size:0.85rem;color:var(--secondary-text-color)}
     </style><div class="form">
       <label>Titolo<input type="text" data-field="title" value="${esc(this._config.title||"")}"></label>
-      <label>Termostato<select data-field="zone">${zoneOpts}<option value="${esc(this._config.zone||"")}" ${!this._zones.find(z=>z.id===this._config.zone)?'selected':''}>${esc(this._config.zone||"Scegli...")}</option></select></label>
+      <label>Termostato<select data-field="zone">${zoneOpts}</select></label>
       <label>Altezza grafico (px)<input type="number" data-field="height" value="${esc(this._config.height||180)}"></label>
       <fieldset><legend>Mostra</legend>
         <label class="row"><input type="checkbox" data-field="show_legend" ${this._config.show_legend!==false?"checked":""}>Legenda</label>
