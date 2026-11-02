@@ -59,3 +59,9 @@ Prima versione.
 - Fix: grafici mostrano curva 24h corretta invece di linea retta.
 - Fix: messaggio "Nessun dato" quando le curve non sono disponibili.
 - Fix: salvataggio profili aggiorna correttamente la lista.
+
+## 0.2.6
+
+- Fix: pulsanti "Crea profilo" e "Modifica profilo" funzionanti (rimosso errore "Too much recursion").
+- Fix: editor profili gestisce correttamente zone e giorni.
+- Fix: salvataggio profili e attivatori ricarica correttamente la lista.
