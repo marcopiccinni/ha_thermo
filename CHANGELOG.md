@@ -52,3 +52,10 @@ Prima versione.
 ## 0.2.4
 
 - Corretto dropdown termostato duplicato negli editor delle card.
+
+## 0.2.5
+
+- Fix: creazione e modifica profili funzionante (inizializzazione curve per tutte le zone).
+- Fix: grafici mostrano curva 24h corretta invece di linea retta.
+- Fix: messaggio "Nessun dato" quando le curve non sono disponibili.
+- Fix: salvataggio profili aggiorna correttamente la lista.

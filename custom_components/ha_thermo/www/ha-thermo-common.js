@@ -58,12 +58,12 @@ export const renderChart = (zone, profile, data) => {
   const maxY = high + pad;
   const y = (t) => 160 - ((t - minY) / (maxY - minY)) * 140;
   const day = todayKey();
-  const curve = profile?.curves?.[zone.id]?.[day] || [];
-  const targets = profile?.targets?.[zone.id] ?? zone.target_temperature ?? zone.default_temp ?? 20;
-  const points = curve.length === 24
-    ? curve.map((t, h) => `${h * 9},${y(t).toFixed(2)}`).join(" ")
-    : "";
-  const targetY = y(zone.target_temperature ?? targets).toFixed(2);
+  const curve = profile?.curves?.[zone.id]?.[day];
+  if (!curve || curve.length !== 24) {
+    return `<svg class="curve" viewBox="0 0 207 180" preserveAspectRatio="none"><text x="103" y="90" text-anchor="middle" fill="var(--secondary-text-color)" font-size="0.8rem">Nessun dato per ${DAY_LABELS[day]}</text></svg>`;
+  }
+  const points = curve.map((t, h) => `${h * 9},${y(t).toFixed(2)}`).join(" ");
+  const targetY = y(zone.target_temperature ?? profile?.targets?.[zone.id] ?? zone.default_temp ?? 20).toFixed(2);
   const currentY = zone.current_temperature == null ? null : y(zone.current_temperature).toFixed(2);
   return `
     <svg class="curve" viewBox="0 0 207 180" preserveAspectRatio="none">
