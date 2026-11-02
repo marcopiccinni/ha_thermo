@@ -40,3 +40,7 @@ Prima versione.
 - Persistenza dello stato e ripristino dopo riavvio.
 - Traduzioni italiano e inglese.
 - Test dei moduli puri e CI con hassfest, HACS, ruff e pytest.
+
+## 0.2.2
+
+- Corretta la versione negli import delle card (`?v=0.2.2` per cache busting).
