@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, DAY_KEYS, DAY_LABELS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.2.2";
+import { DOMAIN, EVENT_TYPES, DAY_KEYS, DAY_LABELS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.2.3";
 
 const DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
 const HVAC_MODES = ["","off","heat","cool","heat_cool","auto","dry","fan_only"];
@@ -51,7 +51,7 @@ class HaThermoManagerCard extends HTMLElement {
 }
 
 class HaThermoManagerCardEditor extends HTMLElement {
-  constructor(){super();this.attachShadow({mode:"open");this._config={};this._zones=[];}
+  constructor(){super();this.attachShadow({mode:"open"});this._config={};this._zones=[];}
   set hass(h){this._hass=h;this._loadZones();}
   setConfig(cfg){this._config={title:"HA Thermo Manager",zone:"all",default_tab:"zones",tabs:["zones","profiles","activators","bypasses"],bypass_minutes:60,...cfg};this._render();}
   async _loadZones(){if(!this._hass)return;try{const d=await callWS(this._hass,{type:`${DOMAIN}/get_config`});this._zones=d?.zones||[];}catch(e){}this._render();}

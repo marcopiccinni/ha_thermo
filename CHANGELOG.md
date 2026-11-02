@@ -44,3 +44,7 @@ Prima versione.
 ## 0.2.2
 
 - Corretta la versione negli import delle card (`?v=0.2.2` per cache busting).
+
+## 0.2.3
+
+- Corretto errore di sintassi JavaScript in ha-thermo-manager-card.js (parentesi mancante nell'editor).
