@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, DAY_KEYS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.2.8";
+import { DOMAIN, EVENT_TYPES, DAY_KEYS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.2.9";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -174,8 +174,8 @@ class HaThermoCard extends HTMLElement {
 }
 
 class HaThermoCardEditor extends HTMLElement {
-  constructor() { super(); this.attachShadow({ mode: "open" }); this._config = {}; this._zones = []; }
-  set hass(hass) { this._hass = hass; this._loadZones(); }
+  constructor() { super(); this.attachShadow({ mode: "open" }); this._config = {}; this._zones = []; this._loaded = false; }
+  set hass(hass) { this._hass = hass; if (!this._loaded) { this._loaded = true; this._loadZones(); } }
   setConfig(config) { this._config = { title: "Termostato", show_graph: false, show_slider: true, show_profile: true, show_bypass: true, show_enable: true, show_status: true, bypass_minutes: 60, hold_minutes: 60, ...config }; this._render(); }
   async _loadZones() {
     if (!this._hass) return;

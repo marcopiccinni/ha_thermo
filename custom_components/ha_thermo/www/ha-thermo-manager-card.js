@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, DAY_KEYS, DAY_LABELS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.2.8";
+import { DOMAIN, EVENT_TYPES, DAY_KEYS, DAY_LABELS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.2.9";
 
 const DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
 const HVAC_MODES = ["","off","heat","cool","heat_cool","auto","dry","fan_only"];
@@ -138,42 +138,56 @@ class HaThermoManagerCard extends HTMLElement {
     if(a==="zone-stop"){this._ws({type:`${DOMAIN}/bypass/stop`,zones:[btn.dataset.zone]},"Bypass fermato");return;}
     if(a==="zone-targets"){this._tab="bypasses";this._render();return;}
     if(a==="zone-profile"){this._ws({type:`${DOMAIN}/set_profile`,profile:btn.value,zones:[btn.dataset.zone]},"Profilo impostato");return;}
-    if(a==="profile-create"){this._profileDraft=this._blankProfile();this._profileIsNew=true;this._editZone=this._data.zones?.[0]?.id;this._editDay="mon";this._render();return;}
-    if(a==="profile-edit"){const id=btn.dataset.profile;const p=(this._data.profiles||[]).find(x=>x.id===id);if(p){this._profileDraft=JSON.parse(JSON.stringify(p));this._profileIsNew=false;this._editZone=this._data.zones?.[0]?.id;this._editDay="mon";this._render();}return;}
+    if(a==="profile-create"){this._profileDraft=this._blankProfile();this._profileIsNew=true;this._dirty=true;this._editZone=this._data.zones?.[0]?.id;this._editDay="mon";this._render();return;}
+    if(a==="profile-edit"){const id=btn.dataset.profile;const p=(this._data.profiles||[]).find(x=>x.id===id);if(p){this._profileDraft=JSON.parse(JSON.stringify(p));this._profileIsNew=false;this._dirty=true;this._editZone=this._data.zones?.[0]?.id;this._editDay="mon";this._render();}return;}
     if(a==="profile-clone"){const id=btn.dataset.profile;const p=(this._data.profiles||[]).find(x=>x.id===id);if(p)this._ws({type:`${DOMAIN}/profile/clone`,source_id:id,name:`${p.name} copia`},"Profilo clonato");return;}
     if(a==="profile-delete"){const id=btn.dataset.profile;this._ws({type:`${DOMAIN}/profile/delete`,profile_id:id},"Profilo eliminato");return;}
     if(a==="profile-zone"){this._editZone=btn.dataset.zone;this._render();return;}
     if(a==="day-toggle"){const d=btn.dataset.day;const arr=this._profileDraft.days[this._editZone]||[...DAYS];this._profileDraft.days[this._editZone]=arr.includes(d)?arr.filter(x=>x!==d):[...arr,d];this._render();return;}
     if(a==="hour-set"){const h=Number(btn.dataset.hour),day=btn.dataset.day,zid=btn.dataset.zone;const cv=this._profileDraft.curves[zid][day];const delta=btn.shiftKey?-0.5:0.5;cv[h]=round((cv[h]||20)+delta);this._render();return;}
     if(a==="profile-save"){const msg={type:this._profileIsNew?`${DOMAIN}/profile/create`:`${DOMAIN}/profile/update`,profile:this._profileDraft};this._ws(msg,this._profileIsNew?"Profilo creato":"Profilo aggiornato").then(()=>{this._profileDraft=null;this._load(true);});return;}
-    if(a==="profile-cancel"){this._profileDraft=null;this._render();return;}
-    if(a==="activator-create"){this._activatorDraft=this._blankActivator();this._activatorIsNew=true;this._render();return;}
-    if(a==="activator-edit"){const id=btn.dataset.activator;const x=(this._data.activators||[]).find(a=>a.id===id);if(x){this._activatorDraft=JSON.parse(JSON.stringify(x));this._activatorIsNew=false;this._render();}return;}
-    if(a==="activator-save"){const r=this.shadowRoot;const zones=[...r.querySelectorAll("[data-act-zone]:checked")].map(i=>i.datasetActZone);const days=[...r.querySelectorAll("[data-act-day]:checked")].map(i=>i.datasetActDay);const msg={type:this._activatorIsNew?`${DOMAIN}/activator/create`:`${DOMAIN}/activator/update`,activator:{...this._activatorDraft,id:this._activatorIsNew?null:this._activatorDraft.id,zones,days}};this._ws(msg,this._activatorIsNew?"Attivatore creato":"Attivatore aggiornato").then(()=>{this._activatorDraft=null;this._load(true);});return;}
-    if(a==="activator-cancel"){this._activatorDraft=null;this._render();return;}
+    if(a==="profile-cancel"){this._profileDraft=null;this._dirty=false;this._render();return;}
+    if(a==="activator-create"){this._activatorDraft=this._blankActivator();this._activatorIsNew=true;this._dirty=true;this._render();return;}
+    if(a==="activator-edit"){const id=btn.dataset.activator;const x=(this._data.activators||[]).find(a=>a.id===id);if(x){this._activatorDraft=JSON.parse(JSON.stringify(x));this._activatorIsNew=false;this._dirty=true;this._render();}return;}
+    if(a==="activator-save"){const r=this.shadowRoot;const zones=[...r.querySelectorAll("[data-act-zone]:checked")].map(i=>i.dataset.actZone);const days=[...r.querySelectorAll("[data-act-day]:checked")].map(i=>i.dataset.actDay);const msg={type:this._activatorIsNew?`${DOMAIN}/activator/create`:`${DOMAIN}/activator/update`,activator:{...this._activatorDraft,id:this._activatorIsNew?null:this._activatorDraft.id,zones,days}};this._ws(msg,this._activatorIsNew?"Attivatore creato":"Attivatore aggiornato").then(()=>{this._activatorDraft=null;this._load(true);});return;}
+    if(a==="activator-cancel"){this._activatorDraft=null;this._dirty=false;this._render();return;}
     if(a==="activator-delete"){const id=btn.dataset.activator;this._ws({type:`${DOMAIN}/activator/delete`,activator_id:id},"Attivatore eliminato");return;}
     if(a==="bypass-start"){const r=this.shadowRoot,g=v=>r.querySelector(`[data-bypass="${v}"]`)?.value;this._ws({type:`${DOMAIN}/bypass/start`,zones:this._config.zone!=="all"?[this._config.zone]:[],until:g("until"),temperature:g("temperature")?Number(g("temperature")):null,offset:g("offset")?Number(g("offset")):null,duration:g("duration")?Number(g("duration")):null},"Bypass avviato");return;}
     if(a==="bypass-stop"){const zs=btn.dataset.zones?btn.dataset.zones.split(",").filter(Boolean):[];this._ws({type:`${DOMAIN}/bypass/stop`,zones:zs},"Bypass fermato");return;}
   }
   
+  _fieldValue(t){
+    if(t.type==="checkbox")return t.checked;
+    if(t.type==="number")return t.value===""?null:Number(t.value);
+    return t.value;
+  }
+
+  _applyProfileDraft(t){
+    this._dirty=true;
+    const k=t.dataset.draft,v=this._fieldValue(t);
+    if(k==="target"){this._profileDraft.targets[this._editZone]=v;}
+    else{this._profileDraft[k]=v;}
+  }
+
   _onChange(e){
     const t=e.target;
     if(t.matches("select[data-action='zone-profile']")){this._ws({type:`${DOMAIN}/set_profile`,profile:t.value,zones:[t.dataset.zone]},"Profilo impostato");return;}
-    if(t.matches("[data-draft]")){const k=t.dataset.draft,v=t.type==="number"?Number(t.value):t.type==="checkbox"?t.checked:t.value;if(k==="target"){this._profileDraft.targets[this._editZone]=v;}else{this._profileDraft[k]=v;}this._render();return;}
-    if(t.matches("[data-draft-act]")){const k=t.datasetDraftAct,v=t.type==="checkbox"?t.checked:t.type==="number"?Number(t.value):t.value;this._activatorDraft[k]=v;return;}
-    if(t.matches("[data-act-day]")){const d=t.datasetActDay,arr=this._activatorDraft.days||[];this._activatorDraft.days=arr.includes(d)?arr.filter(x=>x!==d):[...arr,d];return;}
-    if(t.matches("[data-act-zone]")){const z=t.datasetActZone,arr=this._activatorDraft.zones||[];this._activatorDraft.zones=arr.includes(z)?arr.filter(x=>x!==z):[...arr,z];return;}
+    if(t.matches("[data-draft]")){this._applyProfileDraft(t);return;}
+    if(t.matches("[data-draft-act]")){this._dirty=true;this._activatorDraft[t.dataset.draftAct]=this._fieldValue(t);return;}
+    if(t.matches("[data-act-day]")){this._dirty=true;const d=t.dataset.actDay,arr=this._activatorDraft.days||[];this._activatorDraft.days=arr.includes(d)?arr.filter(x=>x!==d):[...arr,d];return;}
+    if(t.matches("[data-act-zone]")){this._dirty=true;const z=t.dataset.actZone,arr=this._activatorDraft.zones||[];this._activatorDraft.zones=arr.includes(z)?arr.filter(x=>x!==z):[...arr,z];return;}
   }
   
   _onInput(e){
     const t=e.target;
-    if(t.matches("[data-draft]")){const k=t.dataset.draft,v=t.type==="number"?Number(t.value):t.value;if(k==="target"){this._profileDraft.targets[this._editZone]=v;}else{this._profileDraft[k]=v;}this._render();return;}
+    if(t.matches("[data-draft]")){this._applyProfileDraft(t);return;}
+    if(t.matches("[data-draft-act]")){this._dirty=true;this._activatorDraft[t.dataset.draftAct]=this._fieldValue(t);return;}
   }
 }
 
 class HaThermoManagerCardEditor extends HTMLElement {
-  constructor(){super();this.attachShadow({mode:"open"});this._config={};this._zones=[];}
-  set hass(h){this._hass=h;this._loadZones();}
+  constructor(){super();this.attachShadow({mode:"open"});this._config={};this._zones=[];this._loaded=false;}
+  set hass(h){this._hass=h;if(!this._loaded){this._loaded=true;this._loadZones();}}
   setConfig(cfg){this._config={title:"HA Thermo Manager",zone:"all",default_tab:"zones",tabs:["zones","profiles","activators","bypasses"],bypass_minutes:60,...cfg};this._render();}
   async _loadZones(){if(!this._hass)return;try{const d=await callWS(this._hass,{type:`${DOMAIN}/get_config`});this._zones=d?.zones||[];}catch(e){}this._render();}
   _render(){const allOpt='<option value="all">Tutte le zone</option>',zoneOpts=getZoneOptions(this._zones,false),tabs=["zones","profiles","activators","bypasses"];this.shadowRoot.innerHTML=`<style>

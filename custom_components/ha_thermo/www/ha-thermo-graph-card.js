@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, esc, formatTemp, formatTime, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.2.8";
+import { DOMAIN, EVENT_TYPES, esc, formatTemp, formatTime, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.2.9";
 
 class HaThermoGraphCard extends HTMLElement {
   constructor() {
@@ -60,8 +60,8 @@ class HaThermoGraphCard extends HTMLElement {
 }
 
 class HaThermoGraphCardEditor extends HTMLElement {
-  constructor() { super(); this.attachShadow({ mode: "open" }); this._config = {}; this._zones = []; }
-  set hass(hass) { this._hass = hass; this._loadZones(); }
+  constructor() { super(); this.attachShadow({ mode: "open" }); this._config = {}; this._zones = []; this._loaded = false; }
+  set hass(hass) { this._hass = hass; if (!this._loaded) { this._loaded = true; this._loadZones(); } }
   setConfig(config) { this._config = { title: "Grafico", height: 180, show_legend: true, show_current: true, show_target: true, show_profile: true, show_next: true, ...config }; this._render(); }
   async _loadZones() { if (!this._hass) return; try { const data = await callWS(this._hass, { type: `${DOMAIN}/get_config` }); this._zones = data?.zones || []; } catch (e) {} this._render(); }
   _render() {

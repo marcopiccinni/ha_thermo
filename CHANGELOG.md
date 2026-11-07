@@ -75,3 +75,10 @@ Prima versione.
 - Grafico: scala verticale adattiva ai dati (le oscillazioni ora sono visibili).
 - Grafico: nuova linea "programma" calcolata dal backend per tutte le 24 ore (attivatori + curve), con griglia e ore.
 - Grafico: punti orari e fallback quando manca una curva.
+
+## 0.2.9
+
+- Fix: i campi di testo (nome profilo, icona, nome attivatore, ecc.) non perdono piu il focus a ogni lettera.
+- Fix: campi attivatore (giorni/zone/priorita/orari) ora leggono correttamente i valori (dataset corretto).
+- Fix: gli editor visivi delle card non si ridisegnano a ogni aggiornamento di stato.
+- Fix: il refresh periodico non interrompe la modifica di una bozza aperta.
