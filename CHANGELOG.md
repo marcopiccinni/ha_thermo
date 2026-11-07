@@ -65,3 +65,7 @@ Prima versione.
 - Fix: pulsanti "Crea profilo" e "Modifica profilo" funzionanti (rimosso errore "Too much recursion").
 - Fix: editor profili gestisce correttamente zone e giorni.
 - Fix: salvataggio profili e attivatori ricarica correttamente la lista.
+
+## 0.2.7
+
+- Fix: clona profilo inviava campi errati (`new_id`/`new_name` invece di `source_id`/`name`) causando errore "not a valid option".

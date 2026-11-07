@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, DAY_KEYS, DAY_LABELS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.2.6";
+import { DOMAIN, EVENT_TYPES, DAY_KEYS, DAY_LABELS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.2.7";
 
 const DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
 const HVAC_MODES = ["","off","heat","cool","heat_cool","auto","dry","fan_only"];
@@ -140,7 +140,7 @@ class HaThermoManagerCard extends HTMLElement {
     if(a==="zone-profile"){this._ws({type:`${DOMAIN}/set_profile`,profile:btn.value,zones:[btn.dataset.zone]},"Profilo impostato");return;}
     if(a==="profile-create"){this._profileDraft=this._blankProfile();this._profileIsNew=true;this._editZone=this._data.zones?.[0]?.id;this._editDay="mon";this._render();return;}
     if(a==="profile-edit"){const id=btn.dataset.profile;const p=(this._data.profiles||[]).find(x=>x.id===id);if(p){this._profileDraft=JSON.parse(JSON.stringify(p));this._profileIsNew=false;this._editZone=this._data.zones?.[0]?.id;this._editDay="mon";this._render();}return;}
-    if(a==="profile-clone"){const id=btn.dataset.profile;const p=(this._data.profiles||[]).find(x=>x.id===id);if(p)this._ws({type:`${DOMAIN}/profile/clone`,profile_id:id,new_id:`${p.id}_copy`,new_name:`${p.name} copia`},"Profilo clonato");return;}
+    if(a==="profile-clone"){const id=btn.dataset.profile;const p=(this._data.profiles||[]).find(x=>x.id===id);if(p)this._ws({type:`${DOMAIN}/profile/clone`,source_id:id,name:`${p.name} copia`},"Profilo clonato");return;}
     if(a==="profile-delete"){const id=btn.dataset.profile;this._ws({type:`${DOMAIN}/profile/delete`,profile_id:id},"Profilo eliminato");return;}
     if(a==="profile-zone"){this._editZone=btn.dataset.zone;this._render();return;}
     if(a==="day-toggle"){const d=btn.dataset.day;const arr=this._profileDraft.days[this._editZone]||[...DAYS];this._profileDraft.days[this._editZone]=arr.includes(d)?arr.filter(x=>x!==d):[...arr,d];this._render();return;}
