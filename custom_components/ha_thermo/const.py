@@ -11,6 +11,7 @@ VERSION: Final = "0.3.0"
 
 # Configuration
 CONF_ZONES: Final = "zones"
+CONF_NAME: Final = "name"
 CONF_COMFORT_TEMP: Final = "comfort_temp"
 CONF_ECO_TEMP: Final = "eco_temp"
 CONF_AWAY_TEMP: Final = "away_temp"
@@ -102,3 +103,18 @@ HUB_ZONE_ID: Final = "hub"
 def entity_unique_id(entry_id: str, zone_id: str, key: str) -> str:
     """Generate unique ID."""
     return f"{entry_id}_{zone_id}_{key}".replace("-", "_")
+
+# Asset files
+ASSET_FILES: Final = [
+    "manifest.json",
+    "strings.json",
+    "services.yaml",
+    "translations/en.json",
+    "translations/it.json",
+]
+
+CARD_FILES: Final = [
+    "www/ha-thermo-card.js",
+    "www/ha-thermo-graph-card.js",
+    "www/ha-thermo-common.js",
+]
