@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from ha_thermo.const import DAYS
+from ha_thermo.const import DAYS, DEFAULT_ACTIVATOR_ID
 from ha_thermo.models import Activator, Profile, Zone
 from ha_thermo.schedule import (
     activator_matches,
     day_key,
+    expand_days,
+    is_timed_activator,
     next_activator_change,
     next_change,
     next_profile_change,
     pick_activator,
+    resolve_profile_choice,
     resolve_target,
 )
 
@@ -177,3 +180,75 @@ def test_next_change_handles_timezone() -> None:
     result = next_change(profile, [], _zone(), MONDAY + timedelta(minutes=1))
     assert result is not None
     assert result.tzinfo is UTC
+
+
+def test_expand_days_groups_and_dedupe() -> None:
+    assert expand_days(["weekdays"]) == ["mon", "tue", "wed", "thu", "fri"]
+    assert expand_days(["weekend", "mon"]) == ["sat", "sun", "mon"]
+    assert expand_days(["all"]) == list(DAYS)
+    assert expand_days(["mon", "mon", "bogus"]) == ["mon"]
+    assert expand_days("sun") == ["sun"]
+    assert expand_days(["mon,tue,weekend"]) == ["mon", "tue", "sat", "sun"]
+    assert expand_days(None) == list(DAYS)
+
+
+def test_is_timed_activator() -> None:
+    assert is_timed_activator(Activator("a", "A", "comfort", start="00:00")) is False
+    assert is_timed_activator(Activator("a", "A", "comfort", start="08:00")) is True
+    assert (
+        is_timed_activator(Activator("a", "A", "comfort", end="22:00")) is True
+    )
+    # The built-in "Programmazione" activator is always a baseline.
+    assert (
+        is_timed_activator(
+            Activator(DEFAULT_ACTIVATOR_ID, "Programmazione", "comfort", start="08:00")
+        )
+        is False
+    )
+
+
+def test_resolve_profile_choice_precedence() -> None:
+    baseline = Activator("base", "Base", "comfort", days=list(DAYS))
+    timed = Activator(
+        "timed", "Timed", "eco", days=["mon"], start="08:00", end="10:00"
+    )
+    profiles = {"comfort", "eco", "notte", "weekend"}
+    weekly = {"mon": "weekend"}
+    common = {
+        "zone_id": "studio",
+        "moment": _at(9),
+        "profiles": profiles,
+        "activators": [baseline, timed],
+        "weekly": weekly,
+        "condition_checker": None,
+    }
+
+    assert resolve_profile_choice(**common, pinned_profile="notte") == (
+        "notte",
+        "override",
+    )
+    assert resolve_profile_choice(**common) == ("eco", "activator")
+    assert resolve_profile_choice(
+        **{**common, "moment": _at(11)}
+    ) == ("weekend", "weekly")
+    assert resolve_profile_choice(
+        **{**common, "moment": _at(11), "weekly": None}
+    ) == ("comfort", "baseline")
+    assert resolve_profile_choice(
+        zone_id="studio",
+        moment=_at(11),
+        profiles=profiles,
+        activators=[],
+        weekly=None,
+        active_profile="notte",
+        default_profile="comfort",
+    ) == ("notte", "active")
+    assert resolve_profile_choice(
+        zone_id="studio",
+        moment=_at(11),
+        profiles=profiles,
+        activators=[],
+        weekly=None,
+        active_profile=None,
+        default_profile="comfort",
+    ) == ("comfort", "default")

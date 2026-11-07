@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, DAY_KEYS, DAY_LABELS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.2.9";
+import { DOMAIN, EVENT_TYPES, DAY_KEYS, DAY_LABELS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.3.0";
 
 const DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
 const HVAC_MODES = ["","off","heat","cool","heat_cool","auto","dry","fan_only"];
@@ -30,7 +30,7 @@ class HaThermoManagerCard extends HTMLElement {
   }
   static getStubConfig(h,entities){const c=entities?.find(e=>e.startsWith("climate."));return c?{zone:c,title:"Manager"}:{title:"Manager"};}
   static getConfigElement(){return document.createElement("ha-thermo-manager-card-editor");}
-  setConfig(cfg){if(!cfg)throw new Error("Configurazione non valida");this._config={title:"HA Thermo Manager",zone:"all",default_tab:"zones",tabs:["zones","profiles","activators","bypasses"],bypass_minutes:60,...cfg};this._render();}
+  setConfig(cfg){if(!cfg)throw new Error("Configurazione non valida");this._config={title:"HA Thermo Manager",zone:"all",default_tab:"zones",tabs:["zones","plan","profiles","activators","bypasses"],bypass_minutes:60,...cfg};this._render();}
   set hass(h){this._hass=h;if(!this._started){this._started=true;this._load();this._subscribe();this._timer=window.setInterval(()=>{if(!document.hidden)this._load();},30000);}}
   connectedCallback(){if(!this._hass)return;if(!this._data)this._load();if(!this._unsubs.length)this._subscribe();if(!this._timer)this._timer=window.setInterval(()=>{if(!document.hidden)this._load();},30000);}
   disconnectedCallback(){window.clearInterval(this._timer);window.clearTimeout(this._toastTimer);this._timer=null;this._unsubs.forEach(u=>{try{u();}catch(e){}});this._unsubs=[];}
@@ -51,6 +51,8 @@ class HaThermoManagerCard extends HTMLElement {
     let content;
     if(!this._data){
       content=`<div class="empty">${this._error?esc(this._error):"Caricamento…"}</div>`;
+    }else if(this._tab==="plan"){
+      content=this._renderPlan();
     }else if(this._tab==="profiles"){
       content=this._profileDraft?this._renderProfileEditor():this._renderProfiles();
     }else if(this._tab==="activators"){
@@ -69,11 +71,11 @@ class HaThermoManagerCard extends HTMLElement {
       .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.grow{flex:1;min-width:120px}button.small{padding:4px 8px;font-size:0.8rem;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color,#fff);color:var(--primary-text-color)}button.small.active{background:var(--primary-color);color:#fff;border-color:var(--primary-color)}button.danger{background:var(--error-color,#f44336);color:#fff;border:none}
       .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);color:#fff;padding:8px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .3s}.toast.show{opacity:1}.toast.error{background:rgba(244,67,54,0.9)}
       .empty{color:var(--secondary-text-color);padding:12px 0}.field{display:grid;gap:4px;margin:8px 0}
-      .curve{display:grid;grid-template-columns:repeat(8,1fr);gap:6px}.curve button{padding:6px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color,#fff)}.curve button.active{background:var(--primary-color);color:#fff;border-color:var(--primary-color)}
+      .curve{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px}.curve-cell{display:flex;flex-direction:column;gap:2px;align-items:stretch}.curve-hour{font-size:0.7rem;color:var(--secondary-text-color);text-align:center}.hour-input{width:100%;box-sizing:border-box;text-align:center;padding:4px 2px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color,#fff);color:var(--primary-text-color)}.curve-cell.active .hour-input{border-color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 12%,transparent)}
       .day-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.day-tabs button{padding:4px 8px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color,#fff)}.day-tabs button.active{background:var(--primary-color);color:#fff}
       .zone-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.zone-tabs button{padding:4px 8px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color,#fff)}.zone-tabs button.active{background:var(--primary-color);color:#fff}
       .hint{font-size:0.8rem;color:var(--secondary-text-color);margin-top:8px}
-    </style><div class="card"><div class="head"><div><div class="title">${esc(this._config.title)}</div><div class="muted">${this._data?`v${esc(this._data.version)} · ${this._zones().length} zona/e · ${(this._data.profiles||[]).length} profili`:""}</div></div><div class="head-actions">${this._data&&this._config.zone==="all"?`<button class="small ${this._data.enabled?"active":""}" data-action="master">${this._data.enabled?"Controllo attivo":"Controllo spento"}</button>`:""}<button class="small" data-action="refresh">Aggiorna</button></div></div><div class="tabs">${this._config.tabs.includes("zones")?this._tabButton("zones","Zone"):""}${this._config.tabs.includes("profiles")?this._tabButton("profiles","Profili"):""}${this._config.tabs.includes("activators")?this._tabButton("activators","Attivatori"):""}${this._config.tabs.includes("bypasses")?this._tabButton("bypasses","Bypass"):""}</div>${content}<div id="toast" class="toast"></div></div>`;
+    </style><div class="card"><div class="head"><div><div class="title">${esc(this._config.title)}</div><div class="muted">${this._data?`v${esc(this._data.version)} · ${this._zones().length} zona/e · ${(this._data.profiles||[]).length} profili`:""}</div></div><div class="head-actions">${this._data&&this._config.zone==="all"?`<button class="small ${this._data.enabled?"active":""}" data-action="master">${this._data.enabled?"Controllo attivo":"Controllo spento"}</button>`:""}<button class="small" data-action="refresh">Aggiorna</button></div></div><div class="tabs">${this._config.tabs.includes("zones")?this._tabButton("zones","Zone"):""}${this._config.tabs.includes("plan")?this._tabButton("plan","Pianificazione"):""}${this._config.tabs.includes("profiles")?this._tabButton("profiles","Profili"):""}${this._config.tabs.includes("activators")?this._tabButton("activators","Attivatori"):""}${this._config.tabs.includes("bypasses")?this._tabButton("bypasses","Bypass"):""}</div>${content}<div id="toast" class="toast"></div></div>`;
   }
   
   _tabButton(t,l){return `<button class="${this._tab===t?"active":""}" data-action="tab" data-tab="${t}">${l}</button>`;}
@@ -86,6 +88,23 @@ class HaThermoManagerCard extends HTMLElement {
     }).join("")}</div>`;
   }
   
+  _renderPlan(){
+    const zones=this._zones();
+    if(!zones.length)return `<div class="empty">Nessuna zona.</div>`;
+    const profiles=this._data.profiles||[];
+    const sourceLabels={override:"Override temporaneo",activator:"Attivatore orario",weekly:"Piano settimanale",baseline:"Attivatore base",active:"Ultimo profilo",default:"Profilo predefinito",none:"Nessuno"};
+    return `<div class="hint">Scegli, per ogni giorno, il profilo da seguire. Auto lascia decidere agli attivatori e al profilo predefinito.</div><div class="grid">${zones.map(z=>{
+      const weekly=z.weekly_profiles||{};
+      const rows=DAYS.map(d=>{
+        const val=weekly[d]||"__auto__";
+        const opts=[`<option value="__auto__" ${val==="__auto__"?"selected":""}>Auto</option>`,...profiles.map(p=>`<option value="${esc(p.id)}" ${val===p.id?"selected":""}>${esc(p.name)}</option>`)].join("");
+        return `<label class="row"><span class="grow">${DAY_LABELS[d]}</span><select class="grow" data-action="plan-day" data-zone="${esc(z.id)}" data-day="${d}">${opts}</select></label>`;
+      }).join("");
+      const today=z.weekly_profile_today?this._profileName(z.weekly_profile_today):"Auto";
+      return `<div class="panel"><div class="panel-head"><div><div class="name">${esc(z.name)}</div><div class="muted">Oggi: ${esc(today)} · ${esc(sourceLabels[z.profile_source]||z.profile_source||"")}</div></div></div><div class="stats"><span>Profilo attivo<br><b>${esc(z.active_profile_name||"--")}</b></span><span>Origine<br><b>${esc(sourceLabels[z.profile_source]||z.profile_source||"--")}</b></span><span>Override<br><b>${z.pinned?"sì":"no"}</b></span></div>${rows}<div class="row"><button class="small" data-action="plan-clear" data-zone="${esc(z.id)}">Svuota settimana</button>${z.pinned?`<button class="small danger" data-action="plan-unpin" data-zone="${esc(z.id)}">Rimuovi override</button>`:""}</div></div>`;
+    }).join("")}</div>`;
+  }
+
   _renderProfiles(){
     const ps=this._data.profiles||[];
     if(!ps.length)return `<div class="empty"><button class="small" data-action="profile-create">Crea profilo</button></div>`;
@@ -103,7 +122,9 @@ class HaThermoManagerCard extends HTMLElement {
     if(!z)return `<div class="empty">Nessuna zona disponibile</div>`;
     const curve=p.curves[z.id]?.[this._editDay]||blankCurve(p.targets[z.id]);
     const enabled=p.days[z.id]||DAYS;
-    return `<div class="field"><label>Nome<input type="text" data-draft="name" value="${esc(p.name)}"></label><label>Icona<input type="text" data-draft="icon" value="${esc(p.icon||"mdi:home-thermometer")}"></label><label>Modalità HVAC<select data-draft="hvac_mode"><option value="">--</option>${HVAC_MODES.filter(m=>m).map(m=>`<option value="${m}" ${p.hvac_mode===m?"selected":""}>${m}</option>`).join("")}</select></label></div><div class="zone-tabs">${this._data.zones.map(z2=>`<button class="${z2.id===this._editZone?"active":""}" data-action="profile-zone" data-zone="${esc(z2.id)}">${esc(z2.name)}</button>`).join("")}</div><label class="field">Target fallback (${esc(z.name)})<input type="number" min="${esc(z.min_temp)}" max="${esc(z.max_temp)}" step="0.5" value="${esc(p.targets[z.id])}" data-draft="target"></label><div class="day-tabs">${DAYS.map(d=>`<button class="${enabled.includes(d)?"active":""}" data-action="day-toggle" data-day="${d}">${DAY_LABELS[d]}</button>`).join("")}</div><div class="curve">${curve.map((t,h)=>`<button class="${Math.abs(t-(p.targets[z.id]||20))>0.1?"active":""}" data-action="hour-set" data-hour="${h}" data-day="${this._editDay}" data-zone="${esc(z.id)}">${h}:00<br>${formatTemp(t)}</button>`).join("")}</div><div class="row"><button class="small" data-action="profile-save">Salva</button><button class="small" data-action="profile-cancel">Annulla</button></div>`;
+    const fallback=Number(p.targets[z.id]||20);
+    const hours=curve.map((t,h)=>`<div class="curve-cell ${Math.abs(t-fallback)>0.1?"active":""}"><span class="curve-hour">${h}:00</span><input type="number" class="hour-input" data-hour-input data-hour="${h}" data-day="${this._editDay}" data-zone="${esc(z.id)}" min="${esc(z.min_temp)}" max="${esc(z.max_temp)}" step="0.5" inputmode="decimal" value="${esc(t)}"></div>`).join("");
+    return `<div class="field"><label>Nome<input type="text" data-draft="name" value="${esc(p.name)}"></label><label>Icona<input type="text" data-draft="icon" value="${esc(p.icon||"mdi:home-thermometer")}"></label><label>Modalità HVAC<select data-draft="hvac_mode"><option value="">--</option>${HVAC_MODES.filter(m=>m).map(m=>`<option value="${m}" ${p.hvac_mode===m?"selected":""}>${m}</option>`).join("")}</select></label></div><div class="zone-tabs">${this._data.zones.map(z2=>`<button class="${z2.id===this._editZone?"active":""}" data-action="profile-zone" data-zone="${esc(z2.id)}">${esc(z2.name)}</button>`).join("")}</div><label class="field">Target di default (${esc(z.name)})<input type="number" min="${esc(z.min_temp)}" max="${esc(z.max_temp)}" step="0.5" value="${esc(p.targets[z.id])}" data-draft="target"></label><div class="day-tabs">${DAYS.map(d=>`<button class="${enabled.includes(d)?"active":""}" data-action="day-toggle" data-day="${d}">${DAY_LABELS[d]}</button>`).join("")}</div><div class="hint">Tocca il valore o usa le frecce per alzare/abbassare. Puoi anche digitare una temperatura.</div><div class="curve">${hours}</div><div class="row"><button class="small" data-action="profile-save">Salva</button><button class="small" data-action="profile-cancel">Annulla</button></div>`;
   }
   
   _renderActivators(){
@@ -144,7 +165,6 @@ class HaThermoManagerCard extends HTMLElement {
     if(a==="profile-delete"){const id=btn.dataset.profile;this._ws({type:`${DOMAIN}/profile/delete`,profile_id:id},"Profilo eliminato");return;}
     if(a==="profile-zone"){this._editZone=btn.dataset.zone;this._render();return;}
     if(a==="day-toggle"){const d=btn.dataset.day;const arr=this._profileDraft.days[this._editZone]||[...DAYS];this._profileDraft.days[this._editZone]=arr.includes(d)?arr.filter(x=>x!==d):[...arr,d];this._render();return;}
-    if(a==="hour-set"){const h=Number(btn.dataset.hour),day=btn.dataset.day,zid=btn.dataset.zone;const cv=this._profileDraft.curves[zid][day];const delta=btn.shiftKey?-0.5:0.5;cv[h]=round((cv[h]||20)+delta);this._render();return;}
     if(a==="profile-save"){const msg={type:this._profileIsNew?`${DOMAIN}/profile/create`:`${DOMAIN}/profile/update`,profile:this._profileDraft};this._ws(msg,this._profileIsNew?"Profilo creato":"Profilo aggiornato").then(()=>{this._profileDraft=null;this._load(true);});return;}
     if(a==="profile-cancel"){this._profileDraft=null;this._dirty=false;this._render();return;}
     if(a==="activator-create"){this._activatorDraft=this._blankActivator();this._activatorIsNew=true;this._dirty=true;this._render();return;}
@@ -154,6 +174,8 @@ class HaThermoManagerCard extends HTMLElement {
     if(a==="activator-delete"){const id=btn.dataset.activator;this._ws({type:`${DOMAIN}/activator/delete`,activator_id:id},"Attivatore eliminato");return;}
     if(a==="bypass-start"){const r=this.shadowRoot,g=v=>r.querySelector(`[data-bypass="${v}"]`)?.value;this._ws({type:`${DOMAIN}/bypass/start`,zones:this._config.zone!=="all"?[this._config.zone]:[],until:g("until"),temperature:g("temperature")?Number(g("temperature")):null,offset:g("offset")?Number(g("offset")):null,duration:g("duration")?Number(g("duration")):null},"Bypass avviato");return;}
     if(a==="bypass-stop"){const zs=btn.dataset.zones?btn.dataset.zones.split(",").filter(Boolean):[];this._ws({type:`${DOMAIN}/bypass/stop`,zones:zs},"Bypass fermato");return;}
+    if(a==="plan-clear"){this._ws({type:`${DOMAIN}/weekly/clear`,zone:btn.dataset.zone,days:[...DAYS]},"Piano svuotato");return;}
+    if(a==="plan-unpin"){this._ws({type:`${DOMAIN}/override/clear`,zones:[btn.dataset.zone]},"Override rimosso");return;}
   }
   
   _fieldValue(t){
@@ -172,6 +194,8 @@ class HaThermoManagerCard extends HTMLElement {
   _onChange(e){
     const t=e.target;
     if(t.matches("select[data-action='zone-profile']")){this._ws({type:`${DOMAIN}/set_profile`,profile:t.value,zones:[t.dataset.zone]},"Profilo impostato");return;}
+    if(t.matches("select[data-action='plan-day']")){this._ws({type:`${DOMAIN}/weekly/set`,zone:t.dataset.zone,day:t.dataset.day,profile:t.value},"Piano aggiornato");return;}
+    if(t.matches("[data-hour-input]")){this._dirty=true;const h=Number(t.dataset.hour),day=t.dataset.day,zid=t.dataset.zone,cv=this._profileDraft.curves[zid]?.[day];if(cv){const min=Number(t.min),max=Number(t.max);let v=t.value===""?null:Number(t.value);if(v!=null&&!Number.isNaN(v)){v=Math.min(max,Math.max(min,v));cv[h]=v;t.value=v;}}return;}
     if(t.matches("[data-draft]")){this._applyProfileDraft(t);return;}
     if(t.matches("[data-draft-act]")){this._dirty=true;this._activatorDraft[t.dataset.draftAct]=this._fieldValue(t);return;}
     if(t.matches("[data-act-day]")){this._dirty=true;const d=t.dataset.actDay,arr=this._activatorDraft.days||[];this._activatorDraft.days=arr.includes(d)?arr.filter(x=>x!==d):[...arr,d];return;}
@@ -180,6 +204,7 @@ class HaThermoManagerCard extends HTMLElement {
   
   _onInput(e){
     const t=e.target;
+    if(t.matches("[data-hour-input]")){this._dirty=true;const h=Number(t.dataset.hour),day=t.dataset.day,zid=t.dataset.zone,cv=this._profileDraft?.curves?.[zid]?.[day];if(cv&&t.value!==""){const v=Number(t.value);if(!Number.isNaN(v))cv[h]=v;}return;}
     if(t.matches("[data-draft]")){this._applyProfileDraft(t);return;}
     if(t.matches("[data-draft-act]")){this._dirty=true;this._activatorDraft[t.dataset.draftAct]=this._fieldValue(t);return;}
   }
@@ -188,9 +213,9 @@ class HaThermoManagerCard extends HTMLElement {
 class HaThermoManagerCardEditor extends HTMLElement {
   constructor(){super();this.attachShadow({mode:"open"});this._config={};this._zones=[];this._loaded=false;}
   set hass(h){this._hass=h;if(!this._loaded){this._loaded=true;this._loadZones();}}
-  setConfig(cfg){this._config={title:"HA Thermo Manager",zone:"all",default_tab:"zones",tabs:["zones","profiles","activators","bypasses"],bypass_minutes:60,...cfg};this._render();}
+  setConfig(cfg){this._config={title:"HA Thermo Manager",zone:"all",default_tab:"zones",tabs:["zones","plan","profiles","activators","bypasses"],bypass_minutes:60,...cfg};this._render();}
   async _loadZones(){if(!this._hass)return;try{const d=await callWS(this._hass,{type:`${DOMAIN}/get_config`});this._zones=d?.zones||[];}catch(e){}this._render();}
-  _render(){const allOpt='<option value="all">Tutte le zone</option>',zoneOpts=getZoneOptions(this._zones,false),tabs=["zones","profiles","activators","bypasses"];this.shadowRoot.innerHTML=`<style>
+  _render(){const allOpt='<option value="all">Tutte le zone</option>',zoneOpts=getZoneOptions(this._zones,false),tabs=["zones","plan","profiles","activators","bypasses"];this.shadowRoot.innerHTML=`<style>
     .form{display:grid;gap:12px;padding:8px 0}
     label{display:grid;gap:4px;font-size:0.9rem}
     input,select{padding:8px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color,#fff);color:var(--primary-text-color)}
@@ -200,11 +225,11 @@ class HaThermoManagerCardEditor extends HTMLElement {
   </style><div class="form">
     <label>Titolo<input type="text" data-field="title" value="${esc(this._config.title||"")}"></label>
     <label>Zona predefinita<select data-field="zone">${allOpt}${zoneOpts}</select></label>
-    <label>Tab predefinito<select data-field="default_tab"><option value="zones" ${this._config.default_tab==="zones"?"selected":""}>Zone</option><option value="profiles" ${this._config.default_tab==="profiles"?"selected":""}>Profili</option><option value="activators" ${this._config.default_tab==="activators"?"selected":""}>Attivatori</option><option value="bypasses" ${this._config.default_tab==="bypasses"?"selected":""}>Bypass</option></select></label>
+    <label>Tab predefinito<select data-field="default_tab"><option value="zones" ${this._config.default_tab==="zones"?"selected":""}>Zone</option><option value="plan" ${this._config.default_tab==="plan"?"selected":""}>Pianificazione</option><option value="profiles" ${this._config.default_tab==="profiles"?"selected":""}>Profili</option><option value="activators" ${this._config.default_tab==="activators"?"selected":""}>Attivatori</option><option value="bypasses" ${this._config.default_tab==="bypasses"?"selected":""}>Bypass</option></select></label>
     <fieldset><legend>Tab visibili</legend>${tabs.map(t=>`<label class="row"><input type="checkbox" data-field-tab="${t}" ${this._config.tabs?.includes(t)?"checked":""}>${t[0].toUpperCase()+t.slice(1)}</label>`).join("")}</fieldset>
     <label>Minuti bypass rapido<input type="number" data-field="bypass_minutes" value="${esc(this._config.bypass_minutes||60)}"></label>
   </div>`;this.shadowRoot.querySelectorAll("input,select").forEach(el=>el.addEventListener("change",()=>this._changed()));}
-  _changed(){const get=(f)=>this.shadowRoot.querySelector(`[data-field="${f}"]`),getTab=(t)=>this.shadowRoot.querySelector(`[data-field-tab="${t}"]`);const config={...this._config,title:get("title")?.value,zone:get("zone")?.value,default_tab:get("default_tab")?.value,tabs:["zones","profiles","activators","bypasses"].filter(t=>getTab(t)?.checked),bypass_minutes:Number(get("bypass_minutes")?.value)||60};this._config=config;this.dispatchEvent(new CustomEvent("config-changed",{detail:{config},bubbles:true,composed:true}));}
+  _changed(){const get=(f)=>this.shadowRoot.querySelector(`[data-field="${f}"]`),getTab=(t)=>this.shadowRoot.querySelector(`[data-field-tab="${t}"]`);const config={...this._config,title:get("title")?.value,zone:get("zone")?.value,default_tab:get("default_tab")?.value,tabs:["zones","plan","profiles","activators","bypasses"].filter(t=>getTab(t)?.checked),bypass_minutes:Number(get("bypass_minutes")?.value)||60};this._config=config;this.dispatchEvent(new CustomEvent("config-changed",{detail:{config},bubbles:true,composed:true}));}
 }
 
 if(!customElements.get("ha-thermo-manager-card-editor"))customElements.define("ha-thermo-manager-card-editor",HaThermoManagerCardEditor);

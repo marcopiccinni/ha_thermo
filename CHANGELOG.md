@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+- **Pianificazione settimanale per zona**: per ogni giorno si sceglie il profilo da seguire (tab *Pianificazione* della manager card). `Auto` lascia decidere attivatori e profilo predefinito.
+- **Nuovi servizi**: `ha_thermo.set_weekday_profile`, `ha_thermo.clear_weekday_profile`, `ha_thermo.set_profile_override`, `ha_thermo.clear_profile_override`. I giorni accettano `mon`…`sun` o i gruppi `weekdays`, `weekend`, `all`.
+- **Override temporaneo di profilo** da servizio/automazione: alla scadenza (o con `clear_profile_override`) la zona torna al profilo pianificato del giorno.
+- **Nuova precedenza di risoluzione**: override → attivatori orari → piano settimanale → attivatori base a giornata intera → ultimo profilo → default.
+- **Nuovi eventi**: `ha_thermo_profile_override_started`, `ha_thermo_profile_override_ended`, `ha_thermo_weekly_changed`.
+- **Websocket**: `ha_thermo/weekly/set`, `ha_thermo/weekly/clear`, `ha_thermo/override/set`, `ha_thermo/override/clear`.
+- **Editor profilo con input HTML nativi**: le 24 temperature orarie sono campi numerici modificabili con frecce o digitazione; nessun ridisegno durante la modifica per non perdere il focus.
+- Attributi extra sull'entità `select` di zona: `profile_source`, `weekly_profile_today`, `pinned_until`.
+- Grafico 24h con scala adattiva e serie previsionale del target per zona.
+
 ## 0.2.1
 
 - Ripristinato il metodo `_fire` mancante che causava l'errore "ThermoManager object has no attribute '_fire'" durante la configurazione iniziale.

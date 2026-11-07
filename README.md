@@ -54,12 +54,16 @@ Per ogni zona il target effettivo viene risolto in questo ordine:
 3. **Profilo attivo** → curva oraria del giorno oppure fallback se il giorno è disattivato.
 4. **Controllo disabilitato** → nessuna scrittura, il termostato resta com’è.
 
-Il profilo attivo è scelto da:
+Il profilo attivo è scelto con questa precedenza:
 
-1. profilo fissato manualmente sulla zona (con scadenza opzionale);
-2. attivatore con priorità più alta che corrisponde a giorno, ora, zona e condizione;
-3. ultimo profilo attivo;
-4. profilo predefinito (`comfort` se presente).
+1. **override temporaneo** (profilo forzato da servizio/automazione, con scadenza opzionale);
+2. **attivatori orari** (con `end` oppure con inizio diverso da `00:00`) che corrispondono a giorno, ora, zona e condizione;
+3. **piano settimanale** della zona per il giorno corrente (tab *Pianificazione*);
+4. **attivatori base** a giornata intera (`00:00` senza `end`, es. *Programmazione*);
+5. ultimo profilo attivo;
+6. profilo predefinito (`comfort` se presente).
+
+Quando un override scade o viene rimosso, la zona torna automaticamente al profilo pianificato per il giorno. L'attivatore integrato *Programmazione* è sempre trattato come base a giornata intera, quindi non scavalca il piano settimanale; eventuali altre regole orarie sì.
 
 I target vengono scritti solo quando cambiano o quando serve una riasserzione. Le scritture innescate da HA Thermo vengono ignorate per 10 secondi, così non generano falsi override manuali.
 
@@ -193,6 +197,50 @@ data:
 
 Usa `profile: __auto__` per tornare a seguire gli attivatori. `duration` è in minuti oppure `HH:MM`.
 
+### Override temporaneo di profilo
+
+Forza un profilo (ad esempio *Fuori casa*) e torna da solo al piano settimanale alla scadenza:
+
+```yaml
+action: ha_thermo.set_profile_override
+data:
+  profile: fuori_casa
+  zones: [climate.studio]
+  duration: 120
+  source: automazione_finestra
+```
+
+Senza `duration`/`until` l'override resta attivo fino a `ha_thermo.clear_profile_override`. Alla scadenza viene emesso `ha_thermo_profile_override_ended`.
+
+```yaml
+action: ha_thermo.clear_profile_override
+data:
+  zones: [climate.studio]
+```
+
+### Pianificazione settimanale
+
+Assegna un profilo a uno o più giorni della settimana per una zona. I giorni accettano `mon`…`sun` oppure i gruppi `weekdays` (Lun–Ven), `weekend` (Sab–Dom) e `all`.
+
+```yaml
+action: ha_thermo.set_weekday_profile
+data:
+  zones: [climate.studio]
+  days: [weekdays]
+  profile: comfort
+```
+
+`profile: __auto__` rimuove l'assegnazione per i giorni indicati:
+
+```yaml
+action: ha_thermo.clear_weekday_profile
+data:
+  zones: [climate.studio]
+  days: [mon, tue]
+```
+
+Ogni modifica emette `ha_thermo_weekly_changed`.
+
 ### Bypass
 
 ```yaml
@@ -255,6 +303,9 @@ data:
 | `ha_thermo_bypass_ended` | `bypass`, `zones` |
 | `ha_thermo_target_changed` | `zone_id`, `target`, `source` |
 | `ha_thermo_manual_override` | `zone_id`, `temperature`, `until` |
+| `ha_thermo_profile_override_started` | `zone_id`, `profile_id`, `profile_name`, `source`, `until` |
+| `ha_thermo_profile_override_ended` | `zone_id`, `profile_id`, `source` |
+| `ha_thermo_weekly_changed` | `zone_id`, `days`, `profile_id` |
 
 Esempio di automazione:
 
@@ -276,6 +327,10 @@ Le card usano queste API:
 
 - `ha_thermo/get_config`
 - `ha_thermo/set_profile`
+- `ha_thermo/weekly/set`
+- `ha_thermo/weekly/clear`
+- `ha_thermo/override/set`
+- `ha_thermo/override/clear`
 - `ha_thermo/set_temperature`
 - `ha_thermo/set_enabled`
 - `ha_thermo/bypass/start`

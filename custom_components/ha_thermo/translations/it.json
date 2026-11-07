@@ -97,6 +97,82 @@
         "duration": {
           "name": "Durata",
           "description": "Durata opzionale in minuti o HH:MM."
+        },
+        "until": {
+          "name": "Fino a",
+          "description": "Data/ora ISO assoluta in cui terminare l'override."
+        },
+        "source": {
+          "name": "Origine",
+          "description": "Etichetta libera per identificare chi ha attivato l'override."
+        }
+      }
+    },
+    "set_profile_override": {
+      "name": "Override profilo",
+      "description": "Forza temporaneamente un profilo su una o più zone. Alla scadenza (o con clear_profile_override) si torna al profilo pianificato.",
+      "fields": {
+        "profile": {
+          "name": "Profilo",
+          "description": "Id o nome del profilo da forzare."
+        },
+        "zones": {
+          "name": "Zone",
+          "description": "Id zona o entità climate. Vuoto significa tutte le zone."
+        },
+        "duration": {
+          "name": "Durata",
+          "description": "Durata opzionale in minuti o HH:MM. Se assente l'override resta attivo fino a clear_profile_override."
+        },
+        "until": {
+          "name": "Fino a",
+          "description": "Data/ora ISO assoluta in cui terminare l'override."
+        },
+        "source": {
+          "name": "Origine",
+          "description": "Etichetta libera per identificare chi ha attivato l'override."
+        }
+      }
+    },
+    "clear_profile_override": {
+      "name": "Rimuovi override profilo",
+      "description": "Rimuove l'override temporaneo e torna al profilo pianificato per il giorno corrente.",
+      "fields": {
+        "zones": {
+          "name": "Zone",
+          "description": "Id zona o entità climate. Vuoto significa tutte le zone."
+        }
+      }
+    },
+    "set_weekday_profile": {
+      "name": "Imposta profilo del giorno",
+      "description": "Assegna un profilo a uno o più giorni della settimana per le zone indicate.",
+      "fields": {
+        "profile": {
+          "name": "Profilo",
+          "description": "Id o nome del profilo, oppure __auto__ per rimuovere l'assegnazione."
+        },
+        "days": {
+          "name": "Giorni",
+          "description": "Lista di giorni (mon..sun) o gruppi weekdays/weekend/all."
+        },
+        "zones": {
+          "name": "Zone",
+          "description": "Id zona o entità climate. Vuoto significa tutte le zone."
+        }
+      }
+    },
+    "clear_weekday_profile": {
+      "name": "Rimuovi profilo del giorno",
+      "description": "Rimuove l'assegnazione del profilo per i giorni indicati (tutti se omessi).",
+      "fields": {
+        "days": {
+          "name": "Giorni",
+          "description": "Lista di giorni (mon..sun) o gruppi weekdays/weekend/all. Vuoto significa tutti."
+        },
+        "zones": {
+          "name": "Zone",
+          "description": "Id zona o entità climate. Vuoto significa tutte le zone."
         }
       }
     },

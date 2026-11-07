@@ -5,6 +5,9 @@ export const EVENT_TYPES = [
   `${DOMAIN}_bypass_ended`,
   `${DOMAIN}_target_changed`,
   `${DOMAIN}_manual_override`,
+  `${DOMAIN}_profile_override_started`,
+  `${DOMAIN}_profile_override_ended`,
+  `${DOMAIN}_weekly_changed`,
 ];
 export const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 export const DAY_LABELS = { mon: "Lun", tue: "Mar", wed: "Mer", thu: "Gio", fri: "Ven", sat: "Sab", sun: "Dom" };

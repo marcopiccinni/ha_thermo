@@ -10,7 +10,15 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
-from .const import ATTR_ACTIVATOR_ID, ATTR_PROFILE_ID, ATTR_ZONE_ID, DOMAIN
+from .const import (
+    ATTR_ACTIVATOR_ID,
+    ATTR_DAY,
+    ATTR_DAYS,
+    ATTR_PROFILE,
+    ATTR_PROFILE_ID,
+    ATTR_ZONE_ID,
+    DOMAIN,
+)
 from .manager import ThermoManager
 
 _ZONES = vol.Optional("zones")
@@ -85,6 +93,121 @@ async def ws_set_profile(
         msg,
         lambda: manager.async_set_profile(
             msg["profile"], msg.get("zones"), msg.get("duration")
+        ),
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/weekly/set",
+        vol.Required(ATTR_ZONE_ID): cv.string,
+        vol.Optional(ATTR_DAYS): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional(ATTR_DAY): cv.string,
+        vol.Required(ATTR_PROFILE): vol.Any(cv.string, vol.Equal("__auto__")),
+    }
+)
+@websocket_api.async_response
+async def ws_set_weekday_profile(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    manager = _manager(hass, connection, msg)
+    if manager is None:
+        return
+    days = msg.get(ATTR_DAYS)
+    if days is None and msg.get(ATTR_DAY) is not None:
+        days = [msg[ATTR_DAY]]
+    await _execute(
+        connection,
+        msg,
+        lambda: manager.async_set_weekday_profile(
+            days, msg[ATTR_PROFILE], [msg[ATTR_ZONE_ID]]
+        ),
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/weekly/clear",
+        vol.Required(ATTR_ZONE_ID): cv.string,
+        vol.Optional(ATTR_DAYS): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional(ATTR_DAY): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_clear_weekday_profile(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    manager = _manager(hass, connection, msg)
+    if manager is None:
+        return
+    days = msg.get(ATTR_DAYS)
+    if days is None and msg.get(ATTR_DAY) is not None:
+        days = [msg[ATTR_DAY]]
+    await _execute(
+        connection,
+        msg,
+        lambda: manager.async_clear_weekday_profile(
+            days, [msg[ATTR_ZONE_ID]]
+        ),
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/override/set",
+        _ZONES: vol.All(cv.ensure_list, [cv.string]),
+        vol.Required(ATTR_PROFILE): cv.string,
+        _DURATION: _DURATION_SCHEMA,
+        vol.Optional("until"): cv.string,
+        vol.Optional("source"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_set_profile_override(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    manager = _manager(hass, connection, msg)
+    if manager is None:
+        return
+    await _execute(
+        connection,
+        msg,
+        lambda: manager.async_set_profile(
+            msg[ATTR_PROFILE],
+            msg.get("zones"),
+            msg.get("duration"),
+            msg.get("until"),
+            source=str(msg.get("source") or "override"),
+        ),
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/override/clear",
+        _ZONES: vol.All(cv.ensure_list, [cv.string]),
+    }
+)
+@websocket_api.async_response
+async def ws_clear_profile_override(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    manager = _manager(hass, connection, msg)
+    if manager is None:
+        return
+    await _execute(
+        connection,
+        msg,
+        lambda: manager.async_clear_profile_override(
+            msg.get("zones"), source="card"
         ),
     )
 
@@ -402,6 +525,10 @@ async def ws_update_zone(
 COMMANDS = (
     ws_get_config,
     ws_set_profile,
+    ws_set_weekday_profile,
+    ws_clear_weekday_profile,
+    ws_set_profile_override,
+    ws_clear_profile_override,
     ws_start_bypass,
     ws_stop_bypass,
     ws_set_temperature,

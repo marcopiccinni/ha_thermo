@@ -15,6 +15,81 @@ set_profile:
       example: 120
       selector:
         text:
+    until:
+      example: "2026-11-02T22:00:00+01:00"
+      selector:
+        text:
+    source:
+      example: "automation"
+      selector:
+        text:
+
+set_profile_override:
+  fields:
+    profile:
+      required: true
+      example: "fuori_casa"
+      selector:
+        text:
+    zones:
+      example: ["climate.studio"]
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+    duration:
+      example: 120
+      selector:
+        text:
+    until:
+      example: "2026-11-02T22:00:00+01:00"
+      selector:
+        text:
+    source:
+      example: "automation"
+      selector:
+        text:
+
+clear_profile_override:
+  fields:
+    zones:
+      example: ["climate.studio"]
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+
+set_weekday_profile:
+  fields:
+    profile:
+      required: true
+      example: "comfort"
+      selector:
+        text:
+    days:
+      required: true
+      example: ["weekdays"]
+      selector:
+        text:
+    zones:
+      example: ["climate.studio"]
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+
+clear_weekday_profile:
+  fields:
+    days:
+      example: ["mon", "tue"]
+      selector:
+        text:
+    zones:
+      example: ["climate.studio"]
+      selector:
+        entity:
+          domain: climate
+          multiple: true
 
 start_bypass:
   fields:

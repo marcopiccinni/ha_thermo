@@ -97,6 +97,82 @@
         "duration": {
           "name": "Duration",
           "description": "Optional hold in minutes or HH:MM."
+        },
+        "until": {
+          "name": "Until",
+          "description": "Absolute ISO end datetime for the override."
+        },
+        "source": {
+          "name": "Source",
+          "description": "Free-form label to identify who started the override."
+        }
+      }
+    },
+    "set_profile_override": {
+      "name": "Override profile",
+      "description": "Temporarily force a profile on one or more zones. When it expires (or with clear_profile_override) the weekly plan resumes.",
+      "fields": {
+        "profile": {
+          "name": "Profile",
+          "description": "Profile id or name to force."
+        },
+        "zones": {
+          "name": "Zones",
+          "description": "Zone ids or climate entity ids. Empty means all zones."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Optional hold in minutes or HH:MM. If omitted the override stays until clear_profile_override."
+        },
+        "until": {
+          "name": "Until",
+          "description": "Absolute ISO end datetime for the override."
+        },
+        "source": {
+          "name": "Source",
+          "description": "Free-form label to identify who started the override."
+        }
+      }
+    },
+    "clear_profile_override": {
+      "name": "Clear profile override",
+      "description": "Remove the temporary override and return to the planned profile for the current day.",
+      "fields": {
+        "zones": {
+          "name": "Zones",
+          "description": "Zone ids or climate entity ids. Empty means all zones."
+        }
+      }
+    },
+    "set_weekday_profile": {
+      "name": "Set weekday profile",
+      "description": "Assign a profile to one or more weekdays for the selected zones.",
+      "fields": {
+        "profile": {
+          "name": "Profile",
+          "description": "Profile id or name, or __auto__ to remove the assignment."
+        },
+        "days": {
+          "name": "Days",
+          "description": "List of days (mon..sun) or groups weekdays/weekend/all."
+        },
+        "zones": {
+          "name": "Zones",
+          "description": "Zone ids or climate entity ids. Empty means all zones."
+        }
+      }
+    },
+    "clear_weekday_profile": {
+      "name": "Clear weekday profile",
+      "description": "Remove weekday assignments for the selected days (all when omitted).",
+      "fields": {
+        "days": {
+          "name": "Days",
+          "description": "List of days (mon..sun) or groups weekdays/weekend/all. Empty means all."
+        },
+        "zones": {
+          "name": "Zones",
+          "description": "Zone ids or climate entity ids. Empty means all zones."
         }
       }
     },

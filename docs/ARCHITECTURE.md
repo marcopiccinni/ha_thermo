@@ -74,6 +74,10 @@ Un attivatore seleziona un profilo quando:
 
 A parità di corrispondenza vince la priorità più alta. `next_activator_change` e `next_change` calcolano il prossimo cambio per le entità.
 
+### Piano settimanale
+
+`weekly_profiles[zone][day]` associa a ogni giorno (`mon`…`sun`) l’id di un profilo. È gestito dal tab *Pianificazione* della manager card e dai servizi `set_weekday_profile` / `clear_weekday_profile`; `__auto__` rimuove l’assegnazione. I gruppi `weekdays`, `weekend` e `all` vengono espansi da `expand_days` in `schedule.py`.
+
 ### Bypass
 
 Un bypass ha `until`, `zones` (vuota = tutte), `temperature` oppure `offset`, e `source`. Se nessuno dei due valori è presente, il manager crea un bypass di freeze per ogni zona con il target corrente. I bypass scaduti vengono rimossi al tick successivo e generano `ha_thermo_bypass_ended`.
@@ -88,6 +92,19 @@ profilo                    → curva oraria / fallback
 ```
 
 `base` per un bypass a offset è il target del profilo attivo; se non esiste, è il target attuale del climate o il fallback della zona. Il risultato viene sempre limitato a `[zone.min_temp, zone.max_temp]`.
+
+La scelta del profilo segue `resolve_profile_choice` (in `schedule.py`):
+
+```text
+override temporaneo (pin)
+  → attivatori orari (end != None oppure start != 00:00)
+  → piano settimanale del giorno
+  → attivatori base a giornata intera (00:00 senza end)
+  → ultimo profilo attivo
+  → profilo predefinito
+```
+
+Quando un override scade o viene rimosso, `active_profiles` viene risolto di nuovo così la zona torna subito al piano settimanale.
 
 ## Applicazione
 
@@ -115,7 +132,7 @@ Chiave: `ha_thermo.state.<entry_id>`, versione 1.
 
 Vengono salvati:
 
-- profili, attivatori, bypass;
+- profili, attivatori, bypass, piano settimanale (`weekly_profiles`);
 - profilo attivo, pin manuali, override;
 - stato globale e zone disabilitate.
 

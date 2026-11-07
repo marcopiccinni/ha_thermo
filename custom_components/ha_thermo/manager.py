@@ -23,11 +23,13 @@ from homeassistant.util import dt as dt_util
 from .bypass import (
     active_bypass,
     parse_duration_minutes,
+    parse_until,
     remaining_seconds,
     resolve_end,
 )
 from .const import (
     ATTR_BYPASS,
+    ATTR_DAYS,
     ATTR_PROFILE_ID,
     ATTR_PROFILE_NAME,
     ATTR_SOURCE,
@@ -69,7 +71,10 @@ from .const import (
     EVENT_BYPASS_STARTED,
     EVENT_MANUAL_OVERRIDE,
     EVENT_PROFILE_CHANGED,
+    EVENT_PROFILE_OVERRIDE_ENDED,
+    EVENT_PROFILE_OVERRIDE_STARTED,
     EVENT_TARGET_CHANGED,
+    EVENT_WEEKLY_CHANGED,
     HUB_ZONE_ID,
     PROFILE_AUTO,
     PROFILE_ICON,
@@ -77,7 +82,13 @@ from .const import (
     entity_unique_id,
 )
 from .models import Activator, Bypass, Profile, Zone, slugify
-from .schedule import next_change, pick_activator, resolve_target
+from .schedule import (
+    day_key,
+    expand_days,
+    next_change,
+    resolve_profile_choice,
+    resolve_target,
+)
 from .storage import ThermoStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -168,6 +179,7 @@ class ThermoManager:
         self.activators: dict[str, Activator] = {}
         self.bypasses: dict[str, Bypass] = {}
         self.active_profiles: dict[str, str] = {}
+        self.weekly_profiles: dict[str, dict[str, str]] = {}
         self.pinned_profiles: dict[str, dict[str, Any]] = {}
         self.manual_overrides: dict[str, dict[str, Any]] = {}
         self.disabled_zones: set[str] = set()
@@ -233,6 +245,11 @@ class ThermoManager:
             ],
             "bypasses": [item.to_dict() for item in self.bypasses.values()],
             "active_profiles": dict(self.active_profiles),
+            "weekly_profiles": {
+                zone_id: dict(days)
+                for zone_id, days in self.weekly_profiles.items()
+                if days
+            },
             "pinned_profiles": self._serialize_pins(),
             "manual_overrides": self._serialize_overrides(),
         }
@@ -244,6 +261,7 @@ class ThermoManager:
             result[zone_id] = {
                 "profile_id": pin.get("profile_id"),
                 "until": until.isoformat() if isinstance(until, datetime) else None,
+                "source": pin.get("source"),
             }
         return result
 
@@ -304,6 +322,17 @@ class ThermoManager:
             str(zone): str(profile)
             for zone, profile in (raw.get("active_profiles") or {}).items()
         }
+        self.weekly_profiles = {}
+        for zone_id, days in (raw.get("weekly_profiles") or {}).items():
+            if not isinstance(days, dict):
+                continue
+            plan = {
+                str(day): str(profile_id)
+                for day, profile_id in days.items()
+                if str(day) in DAYS and profile_id
+            }
+            if plan:
+                self.weekly_profiles[str(zone_id)] = plan
         self.pinned_profiles = {}
         for zone_id, pin in (raw.get("pinned_profiles") or {}).items():
             if not isinstance(pin, dict):
@@ -314,6 +343,7 @@ class ThermoManager:
             self.pinned_profiles[str(zone_id)] = {
                 "profile_id": str(profile_id),
                 "until": _parse_datetime(pin.get("until")),
+                "source": pin.get("source"),
             }
         self.manual_overrides = {}
         for zone_id, override in (raw.get("manual_overrides") or {}).items():
@@ -398,6 +428,23 @@ class ThermoManager:
                 self.pinned_profiles.pop(zone_id, None)
                 changed = True
 
+        for zone_id in list(self.weekly_profiles):
+            if zone_id not in current:
+                self.weekly_profiles.pop(zone_id, None)
+                changed = True
+                continue
+            plan = {
+                day: profile_id
+                for day, profile_id in self.weekly_profiles[zone_id].items()
+                if day in DAYS and profile_id in self.profiles
+            }
+            if plan != self.weekly_profiles[zone_id]:
+                if plan:
+                    self.weekly_profiles[zone_id] = plan
+                else:
+                    self.weekly_profiles.pop(zone_id, None)
+                changed = True
+
         for zone_id in list(self.manual_overrides):
             if zone_id not in current:
                 self.manual_overrides.pop(zone_id, None)
@@ -472,7 +519,17 @@ class ThermoManager:
             until = pin.get("until")
             if isinstance(until, datetime) and until <= now:
                 self.pinned_profiles.pop(zone_id, None)
+                self.active_profiles.pop(zone_id, None)
+                self._applied_mode.pop(zone_id, None)
                 changed = True
+                self._fire(
+                    EVENT_PROFILE_OVERRIDE_ENDED,
+                    {
+                        ATTR_ZONE_ID: zone_id,
+                        ATTR_PROFILE_ID: pin.get("profile_id"),
+                        ATTR_SOURCE: "expired",
+                    },
+                )
 
         for zone_id, override in list(self.manual_overrides.items()):
             until = override.get("until")
@@ -482,27 +539,41 @@ class ThermoManager:
 
         return changed
 
+    def _profile_choice(
+        self, zone_id: str, moment: datetime
+    ) -> tuple[str | None, str]:
+        pin = self.pinned_profiles.get(zone_id)
+        pinned_profile = None
+        if pin:
+            profile_id = pin.get("profile_id")
+            until = pin.get("until")
+            if profile_id in self.profiles and (
+                not isinstance(until, datetime) or until > moment
+            ):
+                pinned_profile = profile_id
+        return resolve_profile_choice(
+            zone_id=zone_id,
+            moment=moment,
+            profiles=self.profiles.keys(),
+            activators=self.activators.values(),
+            weekly=self.weekly_profiles.get(zone_id),
+            pinned_profile=pinned_profile,
+            active_profile=self.active_profiles.get(zone_id),
+            default_profile=self._default_profile_id(),
+            condition_checker=self._condition_state,
+        )
+
     def _resolve_profile(self, zone_id: str, now: datetime) -> str | None:
         pin = self.pinned_profiles.get(zone_id)
         if pin:
             profile_id = pin.get("profile_id")
-            if profile_id in self.profiles:
-                return profile_id
-            self.pinned_profiles.pop(zone_id, None)
-
-        activator = pick_activator(
-            self.activators.values(),
-            zone_id,
-            now,
-            self._condition_state,
-        )
-        if activator and activator.profile_id in self.profiles:
-            return activator.profile_id
-
-        active = self.active_profiles.get(zone_id)
-        if active in self.profiles:
-            return active
-        return self._default_profile_id()
+            until = pin.get("until")
+            if profile_id not in self.profiles or (
+                isinstance(until, datetime) and until <= now
+            ):
+                self.pinned_profiles.pop(zone_id, None)
+        profile_id, _source = self._profile_choice(zone_id, now)
+        return profile_id
 
     def _condition_state(self, entity_id: str) -> str | None:
         state = self.hass.states.get(entity_id)
@@ -750,6 +821,18 @@ class ThermoManager:
         profile = self._active_profile_for_zone(zone_id)
         return profile.name if profile else None
 
+    def profile_source(self, zone_id: str, now: datetime | None = None) -> str:
+        """Return what is driving the zone (override/activator/weekly/...)."""
+        return self._profile_choice(zone_id, now or dt_util.now())[1]
+
+    def weekly_for_zone(self, zone_id: str) -> dict[str, str]:
+        """Return the weekly plan (day -> profile id) for a zone."""
+        return dict(self.weekly_profiles.get(zone_id) or {})
+
+    def weekly_profile_today(self, zone_id: str) -> str | None:
+        """Return the planned profile for today, if any."""
+        return self.weekly_for_zone(zone_id).get(day_key(dt_util.now()))
+
     def is_pinned(self, zone_id: str) -> bool:
         return zone_id in self.pinned_profiles
 
@@ -804,24 +887,8 @@ class ThermoManager:
         self, zone_id: str, moment: datetime
     ) -> Profile | None:
         """Return the profile that would drive a zone at ``moment`` (no side effects)."""
-        pin = self.pinned_profiles.get(zone_id)
-        if pin and pin.get("profile_id") in self.profiles:
-            until = pin.get("until")
-            if not isinstance(until, datetime) or until > moment:
-                return self.profiles[pin["profile_id"]]
-        activator = pick_activator(
-            self.activators.values(),
-            zone_id,
-            moment,
-            self._condition_state,
-        )
-        if activator and activator.profile_id in self.profiles:
-            return self.profiles[activator.profile_id]
-        active = self.active_profiles.get(zone_id)
-        if active in self.profiles:
-            return self.profiles[active]
-        default = self._default_profile_id()
-        return self.profiles.get(default) if default else None
+        profile_id, _source = self._profile_choice(zone_id, moment)
+        return self.profiles.get(profile_id) if profile_id else None
 
     def target_forecast(self, zone: Zone, now: datetime | None = None) -> list[float]:
         """Return the effective target for each hour of today (0-23)."""
@@ -847,7 +914,13 @@ class ThermoManager:
                 )
         return out
 
-    def _zone_snapshot(self, zone: Zone) -> dict[str, Any]:
+    def _zone_snapshot(
+        self, zone: Zone, now: datetime | None = None
+    ) -> dict[str, Any]:
+        now = now or dt_util.now()
+        _resolved, profile_source = self._profile_choice(zone.id, now)
+        pin = self.pinned_profiles.get(zone.id) or {}
+        weekly = dict(self.weekly_profiles.get(zone.id) or {})
         return {
             "id": zone.id,
             "name": zone.name,
@@ -860,7 +933,11 @@ class ThermoManager:
             "target_temperature": self.target_temperature(zone.id),
             "active_profile": self.active_profile_id(zone.id),
             "active_profile_name": self.active_profile_name(zone.id),
+            "profile_source": profile_source,
+            "weekly_profiles": weekly,
+            "weekly_profile_today": weekly.get(day_key(now)),
             "pinned": self.is_pinned(zone.id),
+            "override_until": _iso(pin.get("until")),
             "bypass_active": self.bypass_for_zone(zone.id) is not None,
             "bypass_remaining": self.bypass_remaining(zone.id),
             "override_active": self.is_override_active(zone.id),
@@ -886,8 +963,14 @@ class ThermoManager:
                 "reassert_interval": self.settings["reassert_interval"],
                 "scan_interval": self.settings["scan_interval"],
             },
-            "zones": [self._zone_snapshot(zone) for zone in self.zones.values()],
+            "zones": [
+                self._zone_snapshot(zone, now) for zone in self.zones.values()
+            ],
             "profiles": [profile.to_dict() for profile in self.profiles.values()],
+            "weekly_profiles": {
+                zone_id: dict(days)
+                for zone_id, days in self.weekly_profiles.items()
+            },
             "activators": [
                 activator.to_dict() for activator in self.activators.values()
             ],
@@ -937,25 +1020,33 @@ class ThermoManager:
         profile_id: str,
         zones: list[str] | None = None,
         duration: Any = None,
+        until: Any = None,
+        source: str = "manual",
     ) -> None:
-        """Pin a profile on some or all zones."""
-        zone_ids = self._resolve_zone_ids(zones)
+        """Pin a profile on some or all zones (temporary override)."""
         if profile_id == PROFILE_AUTO:
-            for zone_id in zone_ids:
-                self.pinned_profiles.pop(zone_id, None)
-            self._save()
-            self._notify()
+            await self.async_clear_profile_override(zones=zones, source=source)
             return
         if profile_id not in self.profiles:
             raise ValueError("unknown_profile")
-        minutes = parse_duration_minutes(duration)
+        zone_ids = self._resolve_zone_ids(zones)
         now = dt_util.now()
-        until = now + timedelta(minutes=minutes) if minutes else None
+        end: datetime | None = None
+        parsed_until = parse_until(until, now)
+        if parsed_until is not None:
+            if parsed_until <= now:
+                raise ValueError("until_in_the_past")
+            end = parsed_until
+        else:
+            minutes = parse_duration_minutes(duration)
+            if minutes:
+                end = now + timedelta(minutes=minutes)
         profile = self.profiles[profile_id]
         for zone_id in zone_ids:
             self.pinned_profiles[zone_id] = {
                 "profile_id": profile_id,
-                "until": until,
+                "until": end,
+                "source": source,
             }
             self.active_profiles[zone_id] = profile_id
             self.manual_overrides.pop(zone_id, None)
@@ -966,11 +1057,101 @@ class ThermoManager:
                     ATTR_ZONE_ID: zone_id,
                     ATTR_PROFILE_ID: profile_id,
                     ATTR_PROFILE_NAME: profile.name,
-                    ATTR_SOURCE: "manual",
+                    ATTR_SOURCE: source,
+                },
+            )
+            self._fire(
+                EVENT_PROFILE_OVERRIDE_STARTED,
+                {
+                    ATTR_ZONE_ID: zone_id,
+                    ATTR_PROFILE_ID: profile_id,
+                    ATTR_PROFILE_NAME: profile.name,
+                    ATTR_SOURCE: source,
+                    ATTR_UNTIL: _iso(end),
                 },
             )
         self._save()
         self._notify()
+
+    async def async_clear_profile_override(
+        self,
+        zones: list[str] | None = None,
+        source: str = "manual",
+    ) -> None:
+        """Remove the temporary profile override and return to the plan."""
+        zone_ids = self._resolve_zone_ids(zones)
+        changed = False
+        now = dt_util.now()
+        for zone_id in zone_ids:
+            pin = self.pinned_profiles.pop(zone_id, None)
+            if pin is None:
+                continue
+            changed = True
+            self.active_profiles.pop(zone_id, None)
+            resolved = self._resolve_profile(zone_id, now)
+            if resolved:
+                self.active_profiles[zone_id] = resolved
+            self._applied_mode.pop(zone_id, None)
+            self._fire(
+                EVENT_PROFILE_OVERRIDE_ENDED,
+                {
+                    ATTR_ZONE_ID: zone_id,
+                    ATTR_PROFILE_ID: pin.get("profile_id"),
+                    ATTR_SOURCE: source,
+                },
+            )
+        if changed:
+            self._save()
+            self._notify()
+
+    async def async_set_weekday_profile(
+        self,
+        days: list[str] | str | None = None,
+        profile_id: str = PROFILE_AUTO,
+        zones: list[str] | None = None,
+    ) -> None:
+        """Assign a profile to one or more weekdays for the selected zones."""
+        day_list = expand_days(days)
+        if days is not None and not day_list:
+            raise ValueError("unknown_day")
+        if profile_id != PROFILE_AUTO and profile_id not in self.profiles:
+            raise ValueError("unknown_profile")
+        zone_ids = self._resolve_zone_ids(zones)
+        changed = False
+        for zone_id in zone_ids:
+            plan = dict(self.weekly_profiles.get(zone_id) or {})
+            for day in day_list:
+                if profile_id == PROFILE_AUTO:
+                    plan.pop(day, None)
+                else:
+                    plan[day] = profile_id
+            if plan:
+                self.weekly_profiles[zone_id] = plan
+            else:
+                self.weekly_profiles.pop(zone_id, None)
+            changed = True
+            self._fire(
+                EVENT_WEEKLY_CHANGED,
+                {
+                    ATTR_ZONE_ID: zone_id,
+                    ATTR_DAYS: day_list,
+                    ATTR_PROFILE_ID: None
+                    if profile_id == PROFILE_AUTO
+                    else profile_id,
+                    ATTR_SOURCE: "service",
+                },
+            )
+        if changed:
+            self._save()
+            self._notify()
+
+    async def async_clear_weekday_profile(
+        self,
+        days: list[str] | str | None = None,
+        zones: list[str] | None = None,
+    ) -> None:
+        """Clear weekday assignments (all days when ``days`` is omitted)."""
+        await self.async_set_weekday_profile(days, PROFILE_AUTO, zones)
 
     async def async_start_bypass(
         self,
@@ -1115,6 +1296,16 @@ class ThermoManager:
         for zone_id, pin in list(self.pinned_profiles.items()):
             if pin.get("profile_id") == profile_id:
                 self.pinned_profiles.pop(zone_id, None)
+        for zone_id in list(self.weekly_profiles):
+            plan = {
+                day: pid
+                for day, pid in self.weekly_profiles[zone_id].items()
+                if pid != profile_id
+            }
+            if plan:
+                self.weekly_profiles[zone_id] = plan
+            else:
+                self.weekly_profiles.pop(zone_id, None)
         default = self._default_profile_id()
         for zone_id in self.zone_order:
             if self.active_profiles.get(zone_id) == profile_id:

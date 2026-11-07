@@ -59,6 +59,25 @@ class _ProfileSelect(ThermoEntity, SelectEntity):
     def current_option(self) -> str | None:
         return PROFILE_AUTO
 
+    @property
+    def extra_state_attributes(self) -> dict[str, str | None]:
+        if self.zone is None:
+            return {}
+        return {
+            "profile_source": self.manager.profile_source(self.zone.id),
+            "weekly_profile_today": self.manager.weekly_profile_today(
+                self.zone.id
+            ),
+            "pinned_until": self._pinned_until(),
+        }
+
+    def _pinned_until(self) -> str | None:
+        if self.zone is None:
+            return None
+        pin = self.manager.pinned_profiles.get(self.zone.id) or {}
+        until = pin.get("until")
+        return until.isoformat() if hasattr(until, "isoformat") else None
+
     async def async_select_option(self, option: str) -> None:
         zones = [self.zone.id] if self.zone is not None else None
         try:

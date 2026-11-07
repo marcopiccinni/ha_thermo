@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Final
 
 DOMAIN: Final = "ha_thermo"
-VERSION: Final = "0.2.9"
+VERSION: Final = "0.3.0"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = f"{DOMAIN}.state"
@@ -120,6 +120,9 @@ EVENT_BYPASS_STARTED: Final = f"{DOMAIN}_bypass_started"
 EVENT_BYPASS_ENDED: Final = f"{DOMAIN}_bypass_ended"
 EVENT_TARGET_CHANGED: Final = f"{DOMAIN}_target_changed"
 EVENT_MANUAL_OVERRIDE: Final = f"{DOMAIN}_manual_override"
+EVENT_PROFILE_OVERRIDE_STARTED: Final = f"{DOMAIN}_profile_override_started"
+EVENT_PROFILE_OVERRIDE_ENDED: Final = f"{DOMAIN}_profile_override_ended"
+EVENT_WEEKLY_CHANGED: Final = f"{DOMAIN}_weekly_changed"
 
 # ---------------------------------------------------------------------------
 # Entity attributes / services
@@ -143,6 +146,8 @@ ATTR_PROFILE: Final = "profile"
 ATTR_ACTIVATOR: Final = "activator"
 ATTR_ACTIVATOR_ID: Final = "activator_id"
 ATTR_SOURCE_ID: Final = "source_id"
+ATTR_DAYS: Final = "days"
+ATTR_DAY: Final = "day"
 
 SERVICE_SET_PROFILE: Final = "set_profile"
 SERVICE_SET_TEMPERATURE: Final = "set_temperature"
@@ -156,6 +161,10 @@ SERVICE_CLONE_PROFILE: Final = "clone_profile"
 SERVICE_CREATE_ACTIVATOR: Final = "create_activator"
 SERVICE_UPDATE_ACTIVATOR: Final = "update_activator"
 SERVICE_DELETE_ACTIVATOR: Final = "delete_activator"
+SERVICE_SET_WEEKDAY_PROFILE: Final = "set_weekday_profile"
+SERVICE_CLEAR_WEEKDAY_PROFILE: Final = "clear_weekday_profile"
+SERVICE_SET_PROFILE_OVERRIDE: Final = "set_profile_override"
+SERVICE_CLEAR_PROFILE_OVERRIDE: Final = "clear_profile_override"
 SERVICE_RELOAD: Final = "reload"
 
 SERVICE_NAMES: Final[dict[str, str]] = {
@@ -171,6 +180,10 @@ SERVICE_NAMES: Final[dict[str, str]] = {
     SERVICE_CREATE_ACTIVATOR: "Create an activator",
     SERVICE_UPDATE_ACTIVATOR: "Update an activator",
     SERVICE_DELETE_ACTIVATOR: "Delete an activator",
+    SERVICE_SET_WEEKDAY_PROFILE: "Assign a profile to weekdays",
+    SERVICE_CLEAR_WEEKDAY_PROFILE: "Clear weekday profile assignments",
+    SERVICE_SET_PROFILE_OVERRIDE: "Temporarily override the profile",
+    SERVICE_CLEAR_PROFILE_OVERRIDE: "Clear the profile override",
     SERVICE_RELOAD: "Reload profiles and activators",
 }
 
