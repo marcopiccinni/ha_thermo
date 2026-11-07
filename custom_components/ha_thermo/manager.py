@@ -958,3 +958,15 @@ _ENTITY_DOMAINS = {
     "profile": "select",
     "enabled": "switch",
 }
+
+
+def zones_from_options(options: dict[str, Any]) -> list[Zone]:
+    """Create Zone objects from config entry options."""
+    zones: list[Zone] = []
+    for cfg in options.get("zones", []):
+        try:
+            zone = Zone.from_dict(cfg)
+            zones.append(zone)
+        except (TypeError, ValueError):
+            _LOGGER.warning("Ignoring invalid zone config: %s", cfg)
+    return zones
