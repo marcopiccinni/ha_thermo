@@ -10,7 +10,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
-from .const import ATTR_PROFILE_ID, ATTR_ZONE_ID, DOMAIN
+from .const import ATTR_PROFILE, ATTR_PROFILE_ID, ATTR_SOURCE_ID, ATTR_ZONE_ID, DOMAIN
 from .manager import ThermoManager
 
 _ZONES = vol.Optional("zones")

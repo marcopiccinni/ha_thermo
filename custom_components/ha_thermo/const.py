@@ -124,3 +124,20 @@ DAYS: Final = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 HOURS_IN_DAY: Final = 24
 MIN_TEMP: Final = 5
 MAX_TEMP: Final = 35
+
+# Additional config
+CONF_CLIMATE_ENTITIES: Final = "climate_entities"
+CONF_CLIMATE_ENTITY: Final = "climate_entity"
+CONF_DEFAULT_TEMP: Final = "default_temp"
+CONF_MIN_TEMP: Final = "min_temp"
+CONF_MAX_TEMP: Final = "max_temp"
+CONF_AWAY_TEMP: Final = "away_temp"
+CONF_COMFORT_TEMP: Final = "comfort_temp"
+CONF_ECO_TEMP: Final = "eco_temp"
+CONF_NIGHT_TEMP: Final = "night_temp"
+CONF_REASSERT_INTERVAL: Final = "reassert_interval"
+CONF_SCAN_INTERVAL: Final = "scan_interval"
+
+# Storage
+STORAGE_KEY: Final = "ha_thermo.state"
+STORAGE_VERSION: Final = 1
