@@ -3,82 +3,34 @@
     "step": {
       "user": {
         "title": "HA Thermo",
-        "description": "Choose the thermostats to manage. You can rename zones, add temperature sensors and change the limits later from the options.",
-        "data": {
-          "name": "Name",
-          "climate_entities": "Thermostats"
-        }
+        "description": "Thermostats integration setup."
       }
-    },
-    "error": {
-      "no_entities": "Select at least one thermostat."
-    },
-    "abort": {
-      "already_configured": "HA Thermo is already configured."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "HA Thermo options",
-        "description": "Configure the automatic control or manage the zones.",
-        "menu_options": {
-          "settings": "Settings",
-          "zones": "Zones",
-          "finish": "Save and close"
-        }
-      },
-      "settings": {
-        "title": "Settings",
-        "description": "Hold and reassert behaviour. Default temperatures are used when the predefined profiles are created.",
-        "data": {
-          "manual_hold": "Manual override hold (minutes)",
-          "reassert_interval": "Reassert interval (minutes)",
-          "scan_interval": "Refresh interval (seconds)",
-          "comfort_temp": "Comfort default temperature",
-          "eco_temp": "Eco default temperature",
-          "night_temp": "Night default temperature",
-          "away_temp": "Away default temperature",
-          "summer_temp": "Summer default temperature"
-        }
-      },
-      "zones": {
-        "title": "Zones",
-        "description": "Add, edit or remove a zone.",
-        "data": {
-          "zone_action": "Action"
-        }
-      },
-      "zone_add": {
-        "title": "Add zone",
-        "description": "A zone is one thermostat and, optionally, a dedicated room temperature sensor.",
-        "data": {
-          "name": "Zone name",
-          "climate_entity": "Thermostat",
-          "temperature_sensor": "Temperature sensor (optional)",
-          "min_temp": "Minimum temperature",
-          "max_temp": "Maximum temperature",
-          "default_temp": "Fallback temperature"
-        }
-      },
-      "zone_edit": {
-        "title": "Edit zone",
-        "description": "The internal zone id is preserved, so profiles and activators keep working.",
-        "data": {
-          "name": "Zone name",
-          "climate_entity": "Thermostat",
-          "temperature_sensor": "Temperature sensor (optional)",
-          "min_temp": "Minimum temperature",
-          "max_temp": "Maximum temperature",
-          "default_temp": "Fallback temperature"
-        }
+        "title": "HA Thermo Options",
+        "description": "Configure zones and settings."
       }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_temperature": {"name": "Current temperature"},
+      "target_temperature": {"name": "Target"},
+      "next_change": {"name": "Next change"},
+      "bypass_remaining": {"name": "Bypass remaining"}
     },
-    "error": {
-      "zone_name_required": "Enter a zone name.",
-      "zone_invalid_climate": "Choose a climate entity.",
-      "zone_duplicate_climate": "This thermostat is already used by another zone.",
-      "zone_invalid_limits": "The maximum temperature must be greater than the minimum."
+    "binary_sensor": {
+      "bypass_active": {"name": "Bypass active"},
+      "override_active": {"name": "Override active"}
+    },
+    "select": {
+      "profile": {"name": "Profile"}
+    },
+    "switch": {
+      "enabled": {"name": "Auto control"}
     }
   },
   "services": {
@@ -86,274 +38,66 @@
       "name": "Set profile",
       "description": "Activate a profile on all zones or on a selection.",
       "fields": {
-        "profile": {
-          "name": "Profile",
-          "description": "Profile id or name, or __auto__ to follow activators."
-        },
-        "zones": {
-          "name": "Zones",
-          "description": "Zone ids or climate entity ids. Empty means all zones."
-        },
-        "duration": {
-          "name": "Duration",
-          "description": "Optional hold in minutes or HH:MM."
-        },
-        "until": {
-          "name": "Until",
-          "description": "Absolute ISO end datetime for the override."
-        },
-        "source": {
-          "name": "Source",
-          "description": "Free-form label to identify who started the override."
-        }
-      }
-    },
-    "set_profile_override": {
-      "name": "Override profile",
-      "description": "Temporarily force a profile on one or more zones. When it expires (or with clear_profile_override) the weekly plan resumes.",
-      "fields": {
-        "profile": {
-          "name": "Profile",
-          "description": "Profile id or name to force."
-        },
-        "zones": {
-          "name": "Zones",
-          "description": "Zone ids or climate entity ids. Empty means all zones."
-        },
-        "duration": {
-          "name": "Duration",
-          "description": "Optional hold in minutes or HH:MM. If omitted the override stays until clear_profile_override."
-        },
-        "until": {
-          "name": "Until",
-          "description": "Absolute ISO end datetime for the override."
-        },
-        "source": {
-          "name": "Source",
-          "description": "Free-form label to identify who started the override."
-        }
-      }
-    },
-    "clear_profile_override": {
-      "name": "Clear profile override",
-      "description": "Remove the temporary override and return to the planned profile for the current day.",
-      "fields": {
-        "zones": {
-          "name": "Zones",
-          "description": "Zone ids or climate entity ids. Empty means all zones."
-        }
-      }
-    },
-    "set_weekday_profile": {
-      "name": "Set weekday profile",
-      "description": "Assign a profile to one or more weekdays for the selected zones.",
-      "fields": {
-        "profile": {
-          "name": "Profile",
-          "description": "Profile id or name, or __auto__ to remove the assignment."
-        },
-        "days": {
-          "name": "Days",
-          "description": "List of days (mon..sun) or groups weekdays/weekend/all."
-        },
-        "zones": {
-          "name": "Zones",
-          "description": "Zone ids or climate entity ids. Empty means all zones."
-        }
-      }
-    },
-    "clear_weekday_profile": {
-      "name": "Clear weekday profile",
-      "description": "Remove weekday assignments for the selected days (all when omitted).",
-      "fields": {
-        "days": {
-          "name": "Days",
-          "description": "List of days (mon..sun) or groups weekdays/weekend/all. Empty means all."
-        },
-        "zones": {
-          "name": "Zones",
-          "description": "Zone ids or climate entity ids. Empty means all zones."
-        }
+        "profile": {"name": "Profile", "description": "Profile id or name, or __auto__."},
+        "zones": {"name": "Zones", "description": "Zone ids or climate entity ids."},
+        "duration": {"name": "Duration", "description": "Optional hold in minutes or HH:MM."}
       }
     },
     "start_bypass": {
       "name": "Start bypass",
-      "description": "Temporarily override the target. Without temperature/offset the current target is frozen.",
+      "description": "Temporarily override the target.",
       "fields": {
-        "zones": {
-          "name": "Zones",
-          "description": "Zone ids or climate entity ids. Empty means all zones."
-        },
-        "temperature": {
-          "name": "Temperature",
-          "description": "Absolute target temperature."
-        },
-        "offset": {
-          "name": "Offset",
-          "description": "Offset from the profile target."
-        },
-        "duration": {
-          "name": "Duration",
-          "description": "Minutes or HH:MM."
-        },
-        "until": {
-          "name": "Until",
-          "description": "Absolute end datetime (ISO 8601)."
-        },
-        "source": {
-          "name": "Source",
-          "description": "Optional label for the origin of the bypass."
-        }
+        "zones": {"name": "Zones", "description": "Zone ids or climate entity ids."},
+        "temperature": {"name": "Temperature", "description": "Absolute temperature."},
+        "offset": {"name": "Offset", "description": "Offset from target."},
+        "duration": {"name": "Duration", "description": "Duration in minutes or HH:MM."},
+        "until": {"name": "Until", "description": "ISO end datetime."},
+        "source": {"name": "Source", "description": "Label to identify the source."}
       }
     },
     "stop_bypass": {
       "name": "Stop bypass",
-      "description": "Cancel active bypasses, optionally only for some zones.",
+      "description": "Stop the active bypass.",
       "fields": {
-        "zones": {
-          "name": "Zones",
-          "description": "Zone ids or climate entity ids. Empty means all zones."
-        }
+        "zones": {"name": "Zones", "description": "Zone ids or climate entity ids."}
       }
     },
     "set_temperature": {
       "name": "Set temperature",
-      "description": "Temporarily set an absolute temperature using a bypass.",
+      "description": "Set a temporary temperature.",
       "fields": {
-        "zones": {
-          "name": "Zones",
-          "description": "Zone ids or climate entity ids. Empty means all zones."
-        },
-        "temperature": {
-          "name": "Temperature",
-          "description": "Target temperature."
-        },
-        "duration": {
-          "name": "Duration",
-          "description": "Minutes or HH:MM."
-        }
+        "zones": {"name": "Zones", "description": "Zone ids or climate entity ids."},
+        "temperature": {"name": "Temperature", "description": "Temperature to set."},
+        "duration": {"name": "Duration", "description": "Duration in minutes or HH:MM."}
       }
     },
     "enable": {
       "name": "Enable control",
-      "description": "Enable or disable automatic control globally or per zone.",
+      "description": "Enable or disable automatic control.",
       "fields": {
-        "enabled": {
-          "name": "Enabled"
-        },
-        "zones": {
-          "name": "Zones",
-          "description": "Zone ids or climate entity ids. Empty means all zones."
-        }
+        "enabled": {"name": "Enabled", "description": "True to enable."},
+        "zones": {"name": "Zones", "description": "Zone ids or climate entity ids."}
       }
     },
     "create_profile": {
       "name": "Create profile",
-      "description": "Create a profile from a full profile object.",
-      "fields": {
-        "profile": {
-          "name": "Profile"
-        }
-      }
+      "description": "Create a new profile."
     },
     "update_profile": {
       "name": "Update profile",
-      "description": "Update an existing profile from a full profile object.",
-      "fields": {
-        "profile": {
-          "name": "Profile"
-        }
-      }
+      "description": "Update an existing profile."
     },
     "delete_profile": {
       "name": "Delete profile",
-      "description": "Delete a profile and the activators that reference it.",
-      "fields": {
-        "profile_id": {
-          "name": "Profile id"
-        }
-      }
+      "description": "Delete a profile."
     },
     "clone_profile": {
       "name": "Clone profile",
-      "description": "Create an independent copy of a profile, optionally limited to some zones.",
-      "fields": {
-        "source_id": {
-          "name": "Source profile id"
-        },
-        "name": {
-          "name": "New profile name"
-        },
-        "zones": {
-          "name": "Zones",
-          "description": "Zone ids to copy. Empty means all zones."
-        }
-      }
-    },
-    "create_activator": {
-      "name": "Create activator",
-      "description": "Create an activator from a full activator object.",
-      "fields": {
-        "activator": {
-          "name": "Activator"
-        }
-      }
-    },
-    "update_activator": {
-      "name": "Update activator",
-      "description": "Update an existing activator from a full activator object.",
-      "fields": {
-        "activator": {
-          "name": "Activator"
-        }
-      }
-    },
-    "delete_activator": {
-      "name": "Delete activator",
-      "description": "Delete an activator.",
-      "fields": {
-        "activator_id": {
-          "name": "Activator id"
-        }
-      }
+      "description": "Clone an existing profile."
     },
     "reload": {
       "name": "Reload",
-      "description": "Re-evaluate profiles and activators."
-    }
-  },
-  "entity": {
-    "sensor": {
-      "current_temperature": {
-        "name": "Current temperature"
-      },
-      "target_temperature": {
-        "name": "Target temperature"
-      },
-      "next_change": {
-        "name": "Next change"
-      },
-      "bypass_remaining": {
-        "name": "Bypass remaining"
-      }
-    },
-    "binary_sensor": {
-      "bypass_active": {
-        "name": "Bypass active"
-      },
-      "override_active": {
-        "name": "Manual override"
-      }
-    },
-    "select": {
-      "profile": {
-        "name": "Profile"
-      }
-    },
-    "switch": {
-      "enabled": {
-        "name": "Automatic control"
-      }
+      "description": "Reload profiles."
     }
   }
 }

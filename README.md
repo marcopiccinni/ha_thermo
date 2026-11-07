@@ -1,98 +1,41 @@
 # HA Thermo
 
-[![Validate](https://github.com/marcopiccinni/ha_thermo/actions/workflows/validate.yml/badge.svg)](https://github.com/marcopiccinni/ha_thermo/actions/workflows/validate.yml)
+Integrazione custom Home Assistant (HACS) per gestire i termostati tramite profili condivisi e bypass temporanei. Include due card Lovelace (`ha-thermo-card`, `ha-thermo-graph-card`).
 
-Integrazione custom per Home Assistant che porta la programmazione settimanale per zona sopra i termostati che già possiedi. Nessun hardware dedicato: HA Thermo legge e comanda le entità `climate` esistenti.
-
-> Progetto personale non ufficiale. Nessuna garanzia di funzionamento o continuità. Verifica sempre il comportamento dei tuoi termostati.
+**Una config entry per installazione**, con zone illimitate.
 
 ## Caratteristiche
 
-- Profili settimanali indipendenti per zona, con curva oraria 7×24 (24 valori per ogni giorno).
-- Giorni attivabili per singola zona: nei giorni disattivati vale il target di fallback.
-- Profili predefiniti: **Comfort 20 °C**, **Eco 19 °C**, **Notte 18 °C**, **Fuori casa 16 °C**, **Estate 26 °C**.
-- Profili clonabili con deep copy indipendente e selezione opzionale delle zone.
-- Attivatori con giorni, fascia oraria, priorità, zone e condizione opzionale su un’entità.
+- Profili condivisi tra tutte le card, con curva oraria 7×24 (24 valori per ogni giorno).
+- Profili predefiniti: **Comfort 20 °C**, **Eco 19 °C**, **Notte 18 °C**, **Fuori casa 17 °C**, **Estate 26 °C**.
+- Import/Export profili come file JSON.
 - Bypass temporanei assoluti, a offset o con blocco del target corrente (freeze).
-- Override manuale rilevato quando qualcuno cambia la temperatura dal termostato, con hold configurabile.
-- Riasserzione periodica del target per i termostati che lo perdono.
-- Controllo diretto delle entità `climate`, senza termostati virtuali.
-- Due card Lovelace incluse, senza build e senza dipendenze esterne.
-- Tutto lo stato persistente sopravvive al riavvio di Home Assistant.
-- Interfaccia in italiano, codice e identificatori in inglese.
+- Override manuale con hold configurabile e riasserzione periodica.
+- Card termostato con slider, profilo, bypass e stato.
+- Card grafico con storico da Home Assistant (temperature attuale e target).
 
 ## Installazione
 
-### HACS (repository custom)
+### HACS (consigliato)
 
-1. HACS → Integrazioni → menu ⋮ → **Repository personalizzati**.
-2. Aggiungi `https://github.com/marcopiccinni/ha_thermo` come categoria **Integration**.
-3. Installa **HA Thermo** e riavvia Home Assistant.
-4. Impostazioni → Dispositivi e servizi → **Aggiungi integrazione** → HA Thermo.
+1. Aggiungi questo repository come custom repository in HACS.
+2. Installa "HA Thermo".
+3. Riavvia Home Assistant.
 
 ### Manuale
 
-Copia la cartella `custom_components/ha_thermo` in `<config>/custom_components/ha_thermo`, riavvia Home Assistant e aggiungi l’integrazione dalla UI.
+1. Copia `custom_components/ha_thermo` in `<config>/custom_components/`.
+2. Riavvia Home Assistant.
 
-## Configurazione iniziale
+## Configurazione
 
-1. Scegli uno o più termostati (`climate.*`).
-2. Ogni termostato diventa una zona con un id stabile.
-3. Dalle **Opzioni** puoi:
-   - modificare hold manuale, intervallo di riasserzione, intervallo di scansione;
-   - cambiare le temperature predefinite dei cinque profili;
-   - aggiungere, modificare o rimuovere zone, sensore temperatura dedicato e limiti.
-
-Le zone hanno un id interno stabile: rinominarle non rompe profili, attivatori o bypass.
-
-## Logica di controllo
-
-Per ogni zona il target effettivo viene risolto in questo ordine:
-
-1. **Bypass attivo** → temperatura assoluta, offset sul target di profilo o freeze.
-2. **Override manuale** → temperatura impostata a mano sul termostato, con scadenza.
-3. **Profilo attivo** → curva oraria del giorno oppure fallback se il giorno è disattivato.
-4. **Controllo disabilitato** → nessuna scrittura, il termostato resta com’è.
-
-Il profilo attivo è scelto con questa precedenza:
-
-1. **override temporaneo** (profilo forzato da servizio/automazione, con scadenza opzionale);
-2. **attivatori orari** (con `end` oppure con inizio diverso da `00:00`) che corrispondono a giorno, ora, zona e condizione;
-3. **piano settimanale** della zona per il giorno corrente (tab *Pianificazione*);
-4. **attivatori base** a giornata intera (`00:00` senza `end`, es. *Programmazione*);
-5. ultimo profilo attivo;
-6. profilo predefinito (`comfort` se presente).
-
-Quando un override scade o viene rimosso, la zona torna automaticamente al profilo pianificato per il giorno. L'attivatore integrato *Programmazione* è sempre trattato come base a giornata intera, quindi non scavalca il piano settimanale; eventuali altre regole orarie sì.
-
-I target vengono scritti solo quando cambiano o quando serve una riasserzione. Le scritture innescate da HA Thermo vengono ignorate per 10 secondi, così non generano falsi override manuali.
-
-## Entità create
-
-Per ogni zona:
-
-| Entità | Descrizione |
-| --- | --- |
-| `sensor.<zona>_temperatura_attuale` | Temperatura ambiente dal sensore dedicato o dal termostato. |
-| `sensor.<zona>_temperatura_target` | Target effettivo, con profilo, bypass e override negli attributi. |
-| `sensor.<zona>_prossimo_cambio` | Prossimo cambio previsto. |
-| `sensor.<zona>_bypass_rimanente` | Secondi rimanenti del bypass. |
-| `binary_sensor.<zona>_bypass_attivo` | Bypass in corso. |
-| `binary_sensor.<zona>_override_manuale` | Override manuale in corso. |
-| `select.<zona>_profilo` | Profilo fissato o `Auto (attivatori)`. |
-| `switch.<zona>_controllo_automatico` | Abilita il controllo della zona. |
-
-Sul dispositivo hub:
-
-- `binary_sensor.ha_thermo_bypass_attivo`
-- `select.ha_thermo_profilo`
-- `switch.ha_thermo_controllo_automatico`
-
-Gli id esatti dipendono dal nome assegnato da Home Assistant. Le card usano gli `entity_id` reali dal registry.
+1. **Impostazioni** → **Dispositivi e servizi** → **Aggiungi integrazione** → **HA Thermo**.
+2. Configura le zone dalle **Opzioni** dell'integrazione:
+   - Aggiungi zone con id, nome, entità climate, sensore temperatura opzionale, min/max, default.
+   - Modifica temperature predefinite dei profili.
+   - Configura hold manuale, intervallo di riasserzione, scansione.
 
 ## Card Lovelace
-
-Le card vengono servite da `/ha_thermo/ha-thermo-card.js`, `/ha_thermo/ha-thermo-graph-card.js` e `/ha_thermo/ha-thermo-manager-card.js` e registrate automaticamente come risorse Lovelace (modalità storage) o caricate via `extra_js_url` (YAML). Non è necessario aggiungerle manualmente.
 
 ### Controlli (`ha-thermo-card`)
 
@@ -102,7 +45,7 @@ Card per un singolo termostato con slider, profilo, bypass e stato.
 type: custom:ha-thermo-card
 title: Studio
 zone: climate.studio
-show_graph: false
+show_graph: true
 show_slider: true
 show_profile: true
 show_bypass: true
@@ -114,72 +57,52 @@ hold_minutes: 60
 
 | Opzione | Default | Descrizione |
 | --- | --- | --- |
-| `title` | `Termostato` | Titolo della card (auto dal nome zona se vuoto). |
-| `zone` | — | Id zona, entità `climate` o nome. Se omesso e c'è una sola zona, viene usata quella. |
+| `title` | `Termostato` | Titolo della card. |
+| `zone` | — | Entità `climate` della zona. |
 | `show_graph` | `false` | Mostra il grafico 24h. |
 | `show_slider` | `true` | Mostra slider e pulsanti ±. |
 | `show_profile` | `true` | Mostra selettore profilo. |
 | `show_bypass` | `true` | Mostra pulsanti bypass. |
 | `show_enable` | `true` | Mostra pulsante Auto/Off. |
-| `show_status` | `true` | Mostra stato (prossimo cambio, bypass). |
-| `bypass_minutes` | `60` | Durata del bypass rapido. |
-| `hold_minutes` | `60` | Durata dell'override manuale. |
+| `show_status` | `true` | Mostra stato (profilo, bypass). |
+| `bypass_minutes` | `60` | Durata bypass rapido. |
+| `hold_minutes` | `60` | Durata override manuale. |
 
 ### Grafico (`ha-thermo-graph-card`)
 
-Card con sola curva 24h, target e temperatura attuale.
+Card con storico temperature da Home Assistant.
 
 ```yaml
 type: custom:ha-thermo-graph-card
-title: Grafico Studio
+title: Studio
 zone: climate.studio
+hours_to_show: 24
 height: 180
-show_legend: true
-show_target: true
+min_temp:
+max_temp:
 show_current: true
-show_profile: true
-show_next: true
+show_target: true
 ```
 
 | Opzione | Default | Descrizione |
 | --- | --- | --- |
-| `title` | `Grafico` | Titolo. |
-| `zone` | — | Come sopra. |
-| `height` | `180` | Altezza grafico in pixel. |
-| `show_legend` | `true` | Mostra legenda. |
-| `show_target` | `true` | Linea target. |
-| `show_current` | `true` | Linea temperatura attuale. |
-| `show_profile` | `true` | Nome profilo attivo. |
-| `show_next` | `true` | Prossimo cambio. |
+| `title` | `Grafico` | Titolo della card. |
+| `zone` | — | Entità `climate` della zona. |
+| `hours_to_show` | `24` | Ore di storico (1-168). |
+| `height` | `180` | Altezza grafico in px. |
+| `min_temp` | auto | Minimo Y (vuoto = auto). |
+| `max_temp` | auto | Massimo Y (vuoto = auto). |
+| `show_current` | `true` | Mostra linea temperatura attuale. |
+| `show_target` | `true` | Mostra linea target. |
 
-### Manager (`ha-thermo-manager-card`)
+## Logica di controllo
 
-Gestione profili, attivatori, zone e bypass. Può essere filtrata per zona.
+Per ogni zona il target effettivo viene risolto in questo ordine:
 
-```yaml
-type: custom:ha-thermo-manager-card
-title: Gestione clima
-zone: all
-default_tab: zones
-tabs:
-  - zones
-  - profiles
-  - activators
-  - bypasses
-bypass_minutes: 60
-```
-
-| Opzione | Default | Descrizione |
-| --- | --- | --- |
-| `title` | `HA Thermo Manager` | Titolo. |
-| `zone` | `all` | Id zona, entità `climate`, nome o `all` per tutte. |
-| `default_tab` | `zones` | Tab iniziale (`zones`, `profiles`, `activators`, `bypasses`). |
-| `tabs` | tutte | Lista dei tab visibili. |
-| `bypass_minutes` | `60` | Durata predefinita bypass. |
-
-**Nota migrazione**: le dashboard 0.1.x con `ha-thermo-card` senza `zone` mostreranno "Scegli il termostato". Duplica la card per ogni termostato impostando `zone`. La manager senza `zone` resta globale.
-
-Un esempio completo è in [`docs/dashboard-example.yaml`](docs/dashboard-example.yaml).
+1. **Bypass attivo** → temperatura assoluta, offset sul target di profilo o freeze.
+2. **Override manuale** → temperatura impostata a mano sul termostato, con scadenza.
+3. **Profilo attivo** → curva oraria del giorno.
+4. **Controllo disabilitato** → nessuna scrittura, il termostato resta com'è.
 
 ## Servizi
 
@@ -190,56 +113,12 @@ Tutti i servizi accettano `zones` come lista di id zona oppure entità `climate.
 ```yaml
 action: ha_thermo.set_profile
 data:
-  profile: eco
-  zones: [climate.studio]
-  duration: 120
-```
-
-Usa `profile: __auto__` per tornare a seguire gli attivatori. `duration` è in minuti oppure `HH:MM`.
-
-### Override temporaneo di profilo
-
-Forza un profilo (ad esempio *Fuori casa*) e torna da solo al piano settimanale alla scadenza:
-
-```yaml
-action: ha_thermo.set_profile_override
-data:
-  profile: fuori_casa
-  zones: [climate.studio]
-  duration: 120
-  source: automazione_finestra
-```
-
-Senza `duration`/`until` l'override resta attivo fino a `ha_thermo.clear_profile_override`. Alla scadenza viene emesso `ha_thermo_profile_override_ended`.
-
-```yaml
-action: ha_thermo.clear_profile_override
-data:
-  zones: [climate.studio]
-```
-
-### Pianificazione settimanale
-
-Assegna un profilo a uno o più giorni della settimana per una zona. I giorni accettano `mon`…`sun` oppure i gruppi `weekdays` (Lun–Ven), `weekend` (Sab–Dom) e `all`.
-
-```yaml
-action: ha_thermo.set_weekday_profile
-data:
-  zones: [climate.studio]
-  days: [weekdays]
   profile: comfort
-```
-
-`profile: __auto__` rimuove l'assegnazione per i giorni indicati:
-
-```yaml
-action: ha_thermo.clear_weekday_profile
-data:
   zones: [climate.studio]
-  days: [mon, tue]
+  duration: 120
 ```
 
-Ogni modifica emette `ha_thermo_weekly_changed`.
+Usa `profile: __auto__` per tornare a seguire il profilo attivo. `duration` è in minuti oppure `HH:MM`.
 
 ### Bypass
 
@@ -259,14 +138,7 @@ data:
   until: "2026-11-02T22:00:00+01:00"
 ```
 
-```yaml
-action: ha_thermo.start_bypass
-data:
-  zones: [climate.camera]
-  duration: 90
-```
-
-Senza `temperature` e `offset` il bypass congela il target corrente. Usa `source` per etichettare l’origine.
+Senza `temperature` e `offset` il bypass congela il target corrente. Usa `source` per etichettare l'origine.
 
 ```yaml
 action: ha_thermo.stop_bypass
@@ -284,59 +156,116 @@ data:
   duration: 45
 ```
 
-### Altri servizi
+### Abilita controllo
 
-- `ha_thermo.enable` con `enabled` e `zones` opzionale.
+```yaml
+action: ha_thermo.enable
+data:
+  enabled: false
+  zones: [climate.studio]
+```
+
+### Gestione profili
+
 - `ha_thermo.create_profile` / `ha_thermo.update_profile` con `profile` (oggetto completo).
 - `ha_thermo.delete_profile` con `profile_id`.
 - `ha_thermo.clone_profile` con `source_id`, `name` e `zones` opzionale.
-- `ha_thermo.create_activator` / `ha_thermo.update_activator` con `activator`.
-- `ha_thermo.delete_activator` con `activator_id`.
 - `ha_thermo.reload`.
 
-## Eventi
+## Automazioni esempio
 
-| Evento | Dati principali |
-| --- | --- |
-| `ha_thermo_profile_changed` | `zone_id`, `profile_id`, `profile_name`, `source` |
-| `ha_thermo_bypass_started` | `bypass`, `zones` |
-| `ha_thermo_bypass_ended` | `bypass`, `zones` |
-| `ha_thermo_target_changed` | `zone_id`, `target`, `source` |
-| `ha_thermo_manual_override` | `zone_id`, `temperature`, `until` |
-| `ha_thermo_profile_override_started` | `zone_id`, `profile_id`, `profile_name`, `source`, `until` |
-| `ha_thermo_profile_override_ended` | `zone_id`, `profile_id`, `source` |
-| `ha_thermo_weekly_changed` | `zone_id`, `days`, `profile_id` |
-
-Esempio di automazione:
+### Fuori casa (override temperatura illimitato)
 
 ```yaml
-triggers:
-  - trigger: event
-    event_type: ha_thermo_manual_override
-actions:
-  - action: notify.mobile_app
+alias: Fuori casa - temperature ridotte
+trigger:
+  - platform: state
+    entity_id: person.marco
+    to: not_home
+condition:
+  - condition: state
+    entity_id: person.anna
+    state: not_home
+action:
+  - action: ha_thermo.set_temperature
     data:
-      message: >-
-        Override manuale in {{ trigger.event.data.zone_id }}:
-        {{ trigger.event.data.temperature }} °C fino a {{ trigger.event.data.until }}
+      zones: [climate.studio, climate.soggiorno]
+      temperature: 17
 ```
 
-## Websocket
+### Ritorno a casa (ripristina profilo)
 
-Le card usano queste API:
+```yaml
+alias: Ritorno a casa - ripristina
+trigger:
+  - platform: state
+    entity_id: person.marco
+    from: not_home
+action:
+  - action: ha_thermo.set_profile
+    data:
+      profile: comfort
+      zones: [climate.studio, climate.soggiorno]
+```
 
-- `ha_thermo/get_config`
-- `ha_thermo/set_profile`
-- `ha_thermo/weekly/set`
-- `ha_thermo/weekly/clear`
-- `ha_thermo/override/set`
-- `ha_thermo/override/clear`
-- `ha_thermo/set_temperature`
-- `ha_thermo/set_enabled`
-- `ha_thermo/bypass/start`
-- `ha_thermo/bypass/stop`
-- `ha_thermo/profile/create|update|delete|clone`
-- `ha_thermo/activator/create|update|delete`
+### Disattivazione completa (l'integrazione non scrive)
+
+```yaml
+alias: Vacanze - disattiva controllo
+trigger:
+  - platform: time
+    at: "08:00:00"
+action:
+  - action: ha_thermo.enable
+    data:
+      enabled: false
+      zones: [climate.studio]
+```
+
+```yaml
+alias: Ritorno vacanze - riattiva
+trigger:
+  - platform: time
+    at: "18:00:00"
+action:
+  - action: ha_thermo.enable
+    data:
+      enabled: true
+      zones: [climate.studio]
+  # L'integrazione reimposta automaticamente il profilo attivo
+```
+
+## Entità create
+
+Per ogni zona:
+
+| Entità | Descrizione |
+| --- | --- |
+| `sensor.<zona>_temperatura_attuale` | Temperatura ambiente dal sensore dedicato o dal termostato. |
+| `sensor.<zona>_temperatura_target` | Target effettivo. |
+| `sensor.<zona>_prossimo_cambio` | Prossimo cambio previsto (ogni ora). |
+| `sensor.<zona>_bypass_rimanente` | Secondi rimanenti del bypass. |
+| `binary_sensor.<zona>_bypass_attivo` | Bypass in corso. |
+| `binary_sensor.<zona>_override_manuale` | Override manuale in corso. |
+| `select.<zona>_profilo` | Profilo fissato o `Auto`. |
+| `switch.<zona>_controllo_automatico` | Abilita il controllo della zona. |
+
+## Import/Export profili
+
+Dalle impostazioni della card termostato (matita) → Gestione profili:
+
+- **Esporta**: scarica un file JSON con tutti i profili.
+- **Importa**: carica un file JSON o incolla il contenuto testuale.
+
+Formato JSON compatto:
+
+```json
+{
+  "profiles": [
+    {"id":"comfort","name":"Comfort","icon":"mdi:home-thermometer","hvac_mode":"heat","targets":{"studio":20},"curves":{"studio":{"mon":[20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20]}},"days":{"studio":["mon","tue","wed","thu","fri","sat","sun"]}}
+  ]
+}
+```
 
 ## Struttura
 
@@ -346,42 +275,30 @@ custom_components/ha_thermo/
 ├── config_flow.py       configurazione e opzioni
 ├── coordinator.py       scansione periodica
 ├── manager.py           risoluzione target e stato persistente
-├── models.py            Zone, Profile, Activator, Bypass
-├── schedule.py          curve, attivatori, prossimo cambio
-├── bypass.py            durate e bypass attivi
-├── storage.py           persistenza
+├── models.py            Zone, Profile, Bypass
+├── bypass.py            helper per bypass temporanei
+├── storage.py           Store versionato
+├── entity.py            base entity
+├── sensor.py / binary_sensor.py / select.py / switch.py
 ├── services.py          servizi HA
 ├── websocket_api.py     API per le card
-├── sensor.py            sensori
-├── binary_sensor.py     bypass e override
-├── select.py            profilo
-├── switch.py            controllo automatico
-├── www/                 card Lovelace
-└── translations/        italiano e inglese
+├── const.py             costanti
+├── strings.json         traduzioni
+└── www/
+    ├── ha-thermo-card.js
+    ├── ha-thermo-graph-card.js
+    └── ha-thermo-common.js
 ```
-
-Dettagli in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Sviluppo
 
 ```bash
-python3 -m pytest -q
-ruff check custom_components tests
-python3 -m compileall -q custom_components/ha_thermo
-node --check custom_components/ha_thermo/www/ha-thermo-card.js
-node --check custom_components/ha_thermo/www/ha-thermo-manager-card.js
+python -m compileall custom_components/ha_thermo
+ruff check custom_components
+node --check custom_components/ha_thermo/www/*.js
+python -m pytest -q
 ```
-
-I test coprono i moduli puri (`models`, `schedule`, `bypass`) senza richiedere Home Assistant.
-
-## Limitazioni
-
-- Non crea entità `climate`: comanda i termostati esistenti.
-- Il rilevamento dell’override dipende dal fatto che il termostato aggiorni `temperature` quando viene cambiato localmente.
-- La risoluzione avviene ogni 10–300 secondi (default 30); non è pensata per controllo sub-secondo.
-- I termostati che ignorano `set_temperature` o cambiano modalità da soli possono richiedere riasserzioni più frequenti.
-- Le card non usano la cronologia di Home Assistant: il grafico mostra la curva del profilo e le temperature correnti.
 
 ## Licenza
 
-MIT. Vedi [LICENSE](LICENSE).
+MIT

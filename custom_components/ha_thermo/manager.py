@@ -1,258 +1,214 @@
-"""State manager for HA Thermo."""
+"""Core manager for HA Thermo - Simplified version."""
 
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_ENTITY_ID,
-    ATTR_TEMPERATURE,
-    STATE_OFF,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
-)
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .bypass import (
-    active_bypass,
-    parse_duration_minutes,
-    parse_until,
-    remaining_seconds,
-    resolve_end,
-)
+from .bypass import active_bypass, parse_duration_minutes, remaining_seconds, resolve_end
 from .const import (
     ATTR_BYPASS,
-    ATTR_DAYS,
     ATTR_PROFILE_ID,
     ATTR_PROFILE_NAME,
     ATTR_SOURCE,
     ATTR_TARGET,
-    ATTR_UNTIL,
     ATTR_ZONE_ID,
     ATTR_ZONES,
-    CONF_AWAY_TEMP,
-    CONF_COMFORT_TEMP,
-    CONF_ECO_TEMP,
     CONF_MANUAL_HOLD,
-    CONF_NIGHT_TEMP,
     CONF_REASSERT_INTERVAL,
     CONF_SCAN_INTERVAL,
-    CONF_SUMMER_TEMP,
     CONF_ZONES,
-    DAYS,
-    DEFAULT_ACTIVATOR_ID,
-    DEFAULT_ACTIVATOR_NAME,
-    DEFAULT_AWAY_TEMP,
-    DEFAULT_COMFORT_TEMP,
-    DEFAULT_ECO_TEMP,
     DEFAULT_MANUAL_HOLD,
-    DEFAULT_NIGHT_TEMP,
-    DEFAULT_PROFILES,
     DEFAULT_REASSERT_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
-    DEFAULT_SUMMER_TEMP,
     DOMAIN,
-    ENTITY_BYPASS_ACTIVE,
-    ENTITY_BYPASS_REMAINING,
-    ENTITY_CURRENT_TEMPERATURE,
-    ENTITY_ENABLED,
-    ENTITY_NEXT_CHANGE,
-    ENTITY_OVERRIDE_ACTIVE,
-    ENTITY_PROFILE,
-    ENTITY_TARGET_TEMPERATURE,
     EVENT_BYPASS_ENDED,
     EVENT_BYPASS_STARTED,
     EVENT_MANUAL_OVERRIDE,
     EVENT_PROFILE_CHANGED,
-    EVENT_PROFILE_OVERRIDE_ENDED,
-    EVENT_PROFILE_OVERRIDE_STARTED,
     EVENT_TARGET_CHANGED,
-    EVENT_WEEKLY_CHANGED,
-    HUB_ZONE_ID,
     PROFILE_AUTO,
-    PROFILE_ICON,
-    VERSION,
+    STORAGE_KEY,
+    STORAGE_VERSION,
     entity_unique_id,
 )
-from .models import Activator, Bypass, Profile, Zone, slugify
-from .schedule import (
-    day_key,
-    expand_days,
-    next_change,
-    resolve_profile_choice,
-    resolve_target,
-)
-from .storage import ThermoStore
+from .models import Bypass, Profile, Zone, slugify
 
 _LOGGER = logging.getLogger(__name__)
 
-_ENTITY_DOMAINS: dict[str, str] = {
-    ENTITY_CURRENT_TEMPERATURE: "sensor",
-    ENTITY_TARGET_TEMPERATURE: "sensor",
-    ENTITY_NEXT_CHANGE: "sensor",
-    ENTITY_BYPASS_REMAINING: "sensor",
-    ENTITY_BYPASS_ACTIVE: "binary_sensor",
-    ENTITY_OVERRIDE_ACTIVE: "binary_sensor",
-    ENTITY_PROFILE: "select",
-    ENTITY_ENABLED: "switch",
-}
-
-
-def zones_from_options(options: dict[str, Any]) -> list[Zone]:
-    """Build the configured zones from config-entry options."""
-    raw_zones = options.get(CONF_ZONES) or []
-    zones: list[Zone] = []
-    for item in raw_zones:
-        if not isinstance(item, dict):
-            continue
-        zone = Zone.from_dict(item)
-        if zone.id and zone.climate_entity:
-            zones.append(zone)
-    return zones
-
-
-def _int_setting(options: dict[str, Any], key: str, default: int) -> int:
-    try:
-        return int(options.get(key, default))
-    except (TypeError, ValueError):
-        return default
-
-
-def _float_setting(options: dict[str, Any], key: str, default: float) -> float:
-    try:
-        return float(options.get(key, default))
-    except (TypeError, ValueError):
-        return default
-
 
 class ThermoManager:
-    """Own the profiles, activators, bypasses and the applied targets."""
+    """Main manager for HA Thermo integration."""
 
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        entry: ConfigEntry,
-        zones: list[Zone],
-        options: dict[str, Any],
-    ) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
-        self.zones: dict[str, Zone] = {zone.id: zone for zone in zones}
-        self.zone_order: list[str] = [zone.id for zone in zones]
-        self.settings = {
-            "manual_hold": _int_setting(
-                options, CONF_MANUAL_HOLD, DEFAULT_MANUAL_HOLD
-            ),
-            "reassert_interval": _int_setting(
-                options, CONF_REASSERT_INTERVAL, DEFAULT_REASSERT_INTERVAL
-            ),
-            "scan_interval": _int_setting(
-                options, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-            ),
-            "temps": {
-                CONF_COMFORT_TEMP: _float_setting(
-                    options, CONF_COMFORT_TEMP, DEFAULT_COMFORT_TEMP
-                ),
-                CONF_ECO_TEMP: _float_setting(
-                    options, CONF_ECO_TEMP, DEFAULT_ECO_TEMP
-                ),
-                CONF_NIGHT_TEMP: _float_setting(
-                    options, CONF_NIGHT_TEMP, DEFAULT_NIGHT_TEMP
-                ),
-                CONF_AWAY_TEMP: _float_setting(
-                    options, CONF_AWAY_TEMP, DEFAULT_AWAY_TEMP
-                ),
-                CONF_SUMMER_TEMP: _float_setting(
-                    options, CONF_SUMMER_TEMP, DEFAULT_SUMMER_TEMP
-                ),
-            },
-        }
-
+        self.enabled = True
+        self.settings: dict[str, Any] = {}
+        self.zones: dict[str, Zone] = {}
         self.profiles: dict[str, Profile] = {}
-        self.activators: dict[str, Activator] = {}
         self.bypasses: dict[str, Bypass] = {}
         self.active_profiles: dict[str, str] = {}
-        self.weekly_profiles: dict[str, dict[str, str]] = {}
         self.pinned_profiles: dict[str, dict[str, Any]] = {}
         self.manual_overrides: dict[str, dict[str, Any]] = {}
         self.disabled_zones: set[str] = set()
-        self.enabled = True
-
         self.effective_targets: dict[str, float | None] = {}
-        self.coordinator: Any = None
-        self._store = ThermoStore(hass, entry.entry_id)
-        self._unsub: list[Any] = []
         self._desired: dict[str, float] = {}
         self._last_apply: dict[str, datetime] = {}
         self._ignore_until: dict[str, datetime] = {}
         self._applied_mode: dict[str, str] = {}
+        self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
+        self._entry_id = entry.entry_id
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+    async def async_setup(self) -> None:
+        """Initialize the manager."""
+        raw = await self._store.async_load() or {}
+        self._restore(raw)
+        self._sync_zones()
+        self._save()
 
-    async def async_initialize(self) -> None:
-        """Load persisted state and start listening to the climate entities."""
-        raw = await self._store.async_load()
-        if raw:
-            self._restore(raw)
-        else:
-            self._create_defaults()
-        changed = self._sync_zones()
-        self._expire(dt_util.now())
-        self._start_listeners()
-        if raw is None or changed:
-            await self._store.async_flush(self._serialize())
+    def _restore(self, raw: dict[str, Any]) -> None:
+        """Restore state from storage."""
+        self.enabled = bool(raw.get("enabled", True))
+        self.disabled_zones = {str(z) for z in raw.get("disabled_zones") or []}
+        self.settings = {
+            "manual_hold": raw.get("manual_hold", DEFAULT_MANUAL_HOLD),
+            "reassert_interval": raw.get("reassert_interval", DEFAULT_REASSERT_INTERVAL),
+            "scan_interval": raw.get("scan_interval", DEFAULT_SCAN_INTERVAL),
+        }
 
-    async def async_shutdown(self) -> None:
-        """Stop listeners and flush the state."""
-        for unsub in self._unsub:
-            unsub()
-        self._unsub.clear()
-        await self._store.async_flush(self._serialize())
+        profiles: dict[str, Profile] = {}
+        for item in raw.get("profiles") or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                profile = Profile.from_dict(item)
+                profiles[profile.id] = profile
+            except (TypeError, ValueError):
+                _LOGGER.warning("Ignoring invalid profile: %s", item)
+        self.profiles = profiles or self._create_defaults()
 
-    def _start_listeners(self) -> None:
-        entities = [zone.climate_entity for zone in self.zones.values()]
-        if not entities:
-            return
-        self._unsub.append(
-            async_track_state_change_event(
-                self.hass, entities, self._handle_state_change
+        self.active_profiles = {
+            str(zone): str(profile)
+            for zone, profile in (raw.get("active_profiles") or {}).items()
+        }
+        self.pinned_profiles = {}
+        for zone_id, pin in (raw.get("pinned_profiles") or {}).items():
+            if not isinstance(pin, dict):
+                continue
+            profile_id = pin.get("profile_id")
+            if not profile_id:
+                continue
+            self.pinned_profiles[str(zone_id)] = {
+                "profile_id": str(profile_id),
+                "until": _parse_datetime(pin.get("until")),
+            }
+        self.manual_overrides = {}
+        now = dt_util.now()
+        for zone_id, override in (raw.get("manual_overrides") or {}).items():
+            if not isinstance(override, dict):
+                continue
+            until = _parse_datetime(override.get("until"))
+            temperature = override.get("temperature")
+            if until is None or temperature is None or until <= now:
+                continue
+            self.manual_overrides[str(zone_id)] = {
+                "temperature": float(temperature),
+                "until": until,
+            }
+
+        bypasses: dict[str, Bypass] = {}
+        for item in raw.get("bypasses") or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                bypass = Bypass.from_dict(item)
+                bypasses[bypass.id] = bypass
+            except (TypeError, ValueError):
+                _LOGGER.warning("Ignoring invalid bypass: %s", item)
+        self.bypasses = bypasses
+
+        zones: dict[str, Zone] = {}
+        for item in (raw.get("zones") or []):
+            if not isinstance(item, dict):
+                continue
+            try:
+                zone = Zone.from_dict(item)
+                zones[zone.id] = zone
+            except (TypeError, ValueError):
+                _LOGGER.warning("Ignoring invalid zone: %s", item)
+        self.zones = zones
+
+    def _create_defaults(self) -> dict[str, Profile]:
+        """Create default profiles."""
+        profiles = {}
+        defaults = {
+            "comfort": ("Comfort", 20.0, "mdi:home-thermometer"),
+            "eco": ("Eco", 19.0, "mdi:leaf"),
+            "night": ("Notte", 18.0, "mdi:weather-night"),
+            "away": ("Fuori casa", 17.0, "mdi:home-export"),
+            "summer": ("Estate", 26.0, "mdi:sun-thermometer"),
+        }
+        for pid, (name, temp, icon) in defaults.items():
+            profiles[pid] = Profile(
+                id=pid,
+                name=name,
+                icon=icon,
+                targets={},
+                curves={},
+                days={},
             )
-        )
+            profiles[pid].hvac_mode = "heat"
+        return profiles
 
-    def _notify(self) -> None:
-        if self.coordinator is not None:
-            self.hass.async_create_task(self.coordinator.async_request_refresh())
+    def _sync_zones(self) -> None:
+        """Sync zones with config entry options."""
+        options = dict(self.entry.options)
+        zone_configs = options.get(CONF_ZONES, [])
+        current: dict[str, Zone] = {}
+        for cfg in zone_configs:
+            zone = Zone.from_dict(cfg)
+            current[zone.id] = zone
+        for zone_id in list(self.zones):
+            if zone_id not in current:
+                self.zones.pop(zone_id, None)
+                self.active_profiles.pop(zone_id, None)
+                self.pinned_profiles.pop(zone_id, None)
+                self.manual_overrides.pop(zone_id, None)
+                self.disabled_zones.discard(zone_id)
+        for zone_id, zone in current.items():
+            if zone_id not in self.zones:
+                self.zones[zone_id] = zone
+                if zone_id not in self.active_profiles:
+                    default = self._default_profile_id()
+                    if default:
+                        self.active_profiles[zone_id] = default
+        self.zones = current
 
     def _save(self) -> None:
-        self._store.async_save(self._serialize())
-
-    def _serialize(self) -> dict[str, Any]:
-        return {
+        """Persist state to storage."""
+        data = {
             "enabled": self.enabled,
             "disabled_zones": sorted(self.disabled_zones),
-            "profiles": [profile.to_dict() for profile in self.profiles.values()],
-            "activators": [
-                activator.to_dict() for activator in self.activators.values()
-            ],
-            "bypasses": [item.to_dict() for item in self.bypasses.values()],
+            "manual_hold": self.settings["manual_hold"],
+            "reassert_interval": self.settings["reassert_interval"],
+            "scan_interval": self.settings["scan_interval"],
+            "profiles": [p.to_dict() for p in self.profiles.values()],
+            "bypasses": [b.to_dict() for b in self.bypasses.values()],
             "active_profiles": dict(self.active_profiles),
-            "weekly_profiles": {
-                zone_id: dict(days)
-                for zone_id, days in self.weekly_profiles.items()
-                if days
-            },
             "pinned_profiles": self._serialize_pins(),
             "manual_overrides": self._serialize_overrides(),
         }
+        self._store.async_delay_save(lambda: data, 2.0)
 
     def _serialize_pins(self) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
@@ -261,7 +217,6 @@ class ThermoManager:
             result[zone_id] = {
                 "profile_id": pin.get("profile_id"),
                 "until": until.isoformat() if isinstance(until, datetime) else None,
-                "source": pin.get("source"),
             }
         return result
 
@@ -275,214 +230,49 @@ class ThermoManager:
             }
         return result
 
-    def _restore(self, raw: dict[str, Any]) -> None:
-        self.enabled = bool(raw.get("enabled", True))
-        self.disabled_zones = {
-            str(zone) for zone in raw.get("disabled_zones") or []
-        }
-
-        profiles: dict[str, Profile] = {}
-        for item in raw.get("profiles") or []:
-            if not isinstance(item, dict):
-                continue
-            try:
-                profile = Profile.from_dict(item)
-            except (TypeError, ValueError):
-                _LOGGER.warning("Ignoring invalid stored profile: %s", item)
-                continue
-            profiles[profile.id] = profile
-        self.profiles = profiles
-
-        activators: dict[str, Activator] = {}
-        for item in raw.get("activators") or []:
-            if not isinstance(item, dict):
-                continue
-            try:
-                activator = Activator.from_dict(item)
-            except (TypeError, ValueError):
-                _LOGGER.warning("Ignoring invalid stored activator: %s", item)
-                continue
-            activators[activator.id] = activator
-        self.activators = activators
-
-        bypasses: dict[str, Bypass] = {}
-        for item in raw.get("bypasses") or []:
-            if not isinstance(item, dict):
-                continue
-            try:
-                bypass = Bypass.from_dict(item)
-            except (TypeError, ValueError):
-                _LOGGER.warning("Ignoring invalid stored bypass: %s", item)
-                continue
-            bypasses[bypass.id] = bypass
-        self.bypasses = bypasses
-
-        now = dt_util.now()
-        self.active_profiles = {
-            str(zone): str(profile)
-            for zone, profile in (raw.get("active_profiles") or {}).items()
-        }
-        self.weekly_profiles = {}
-        for zone_id, days in (raw.get("weekly_profiles") or {}).items():
-            if not isinstance(days, dict):
-                continue
-            plan = {
-                str(day): str(profile_id)
-                for day, profile_id in days.items()
-                if str(day) in DAYS and profile_id
-            }
-            if plan:
-                self.weekly_profiles[str(zone_id)] = plan
-        self.pinned_profiles = {}
-        for zone_id, pin in (raw.get("pinned_profiles") or {}).items():
-            if not isinstance(pin, dict):
-                continue
-            profile_id = pin.get("profile_id")
-            if not profile_id:
-                continue
-            self.pinned_profiles[str(zone_id)] = {
-                "profile_id": str(profile_id),
-                "until": _parse_datetime(pin.get("until")),
-                "source": pin.get("source"),
-            }
-        self.manual_overrides = {}
-        for zone_id, override in (raw.get("manual_overrides") or {}).items():
-            if not isinstance(override, dict):
-                continue
-            until = _parse_datetime(override.get("until"))
-            temperature = override.get("temperature")
-            if until is None or temperature is None or until <= now:
-                continue
-            self.manual_overrides[str(zone_id)] = {
-                "temperature": float(temperature),
-                "until": until,
-            }
-
-    def _create_defaults(self) -> None:
-        temps = self.settings["temps"]
-        for profile_id, name, temp_key in DEFAULT_PROFILES:
-            profile = Profile(
-                id=profile_id,
-                name=name,
-                icon=PROFILE_ICON,
-            )
-            for zone in self.zones.values():
-                profile.ensure_zone(zone.id, temps[temp_key])
-            self.profiles[profile_id] = profile
-
-        default = self._default_profile_id()
-        if default:
-            for zone in self.zones.values():
-                self.active_profiles[zone.id] = default
-
-        self.activators[DEFAULT_ACTIVATOR_ID] = Activator(
-            id=DEFAULT_ACTIVATOR_ID,
-            name=DEFAULT_ACTIVATOR_NAME,
-            profile_id="comfort",
-            zones=[],
-            days=list(DAYS),
-            start="00:00",
-            end=None,
-            priority=0,
-            enabled=True,
-        )
-
-    def _sync_zones(self) -> bool:
-        """Align stored profiles with the zones configured in options."""
+    def _expire(self, now: datetime) -> bool:
+        """Expire timed items."""
         changed = False
-        current = set(self.zones)
-
-        for profile in self.profiles.values():
-            for zone_id in list(profile.targets):
-                if zone_id not in current:
-                    profile.targets.pop(zone_id, None)
-                    changed = True
-            for zone_id in list(profile.curves):
-                if zone_id not in current:
-                    profile.curves.pop(zone_id, None)
-                    changed = True
-            for zone_id in list(profile.days):
-                if zone_id not in current:
-                    profile.days.pop(zone_id, None)
-                    changed = True
-            for zone in self.zones.values():
-                if profile.ensure_zone(zone.id, zone.default_temp):
-                    changed = True
-
-        default_profile = self._default_profile_id()
-        for zone_id in list(self.active_profiles):
-            if (
-                zone_id not in current
-                or self.active_profiles[zone_id] not in self.profiles
-            ):
-                self.active_profiles.pop(zone_id, None)
+        for bypass_id, bypass in list(self.bypasses.items()):
+            if bypass.until <= now:
+                self.bypasses.pop(bypass_id, None)
                 changed = True
-        for zone_id in current:
-            if zone_id not in self.active_profiles and default_profile:
-                self.active_profiles[zone_id] = default_profile
-                changed = True
-
-        for zone_id in list(self.pinned_profiles):
-            pin = self.pinned_profiles.get(zone_id, {})
-            if zone_id not in current or pin.get("profile_id") not in self.profiles:
+                self._fire(
+                    EVENT_BYPASS_ENDED,
+                    {ATTR_BYPASS: bypass.to_dict(), ATTR_ZONES: bypass.zones},
+                )
+        for zone_id, pin in list(self.pinned_profiles.items()):
+            until = pin.get("until")
+            if isinstance(until, datetime) and until <= now:
                 self.pinned_profiles.pop(zone_id, None)
                 changed = True
-
-        for zone_id in list(self.weekly_profiles):
-            if zone_id not in current:
-                self.weekly_profiles.pop(zone_id, None)
-                changed = True
-                continue
-            plan = {
-                day: profile_id
-                for day, profile_id in self.weekly_profiles[zone_id].items()
-                if day in DAYS and profile_id in self.profiles
-            }
-            if plan != self.weekly_profiles[zone_id]:
-                if plan:
-                    self.weekly_profiles[zone_id] = plan
-                else:
-                    self.weekly_profiles.pop(zone_id, None)
-                changed = True
-
-        for zone_id in list(self.manual_overrides):
-            if zone_id not in current:
+        for zone_id, override in list(self.manual_overrides.items()):
+            until = override.get("until")
+            if not isinstance(until, datetime) or until <= now:
                 self.manual_overrides.pop(zone_id, None)
                 changed = True
-
-        self.disabled_zones &= current
-
-        for activator in self.activators.values():
-            if activator.zones:
-                filtered = [zone for zone in activator.zones if zone in current]
-                if filtered != activator.zones:
-                    activator.zones = filtered
-                    if not filtered:
-                        activator.enabled = False
-                    changed = True
-
-        for bypass_id, bypass in list(self.bypasses.items()):
-            if bypass.zones:
-                filtered = [zone for zone in bypass.zones if zone in current]
-                if filtered != bypass.zones:
-                    bypass.zones = filtered
-                    changed = True
-                if not filtered:
-                    self.bypasses.pop(bypass_id, None)
-                    changed = True
-
         return changed
 
-    # ------------------------------------------------------------------
-    # Periodic resolution
-    # ------------------------------------------------------------------
+    def _resolve_profile(self, zone_id: str, now: datetime) -> str | None:
+        """Resolve the active profile for a zone."""
+        pin = self.pinned_profiles.get(zone_id)
+        if pin:
+            profile_id = pin.get("profile_id")
+            if profile_id in self.profiles:
+                until = pin.get("until")
+                if not isinstance(until, datetime) or until > now:
+                    return profile_id
+                self.pinned_profiles.pop(zone_id, None)
+        active = self.active_profiles.get(zone_id)
+        if active in self.profiles:
+            return active
+        return self._default_profile_id()
 
     async def async_tick(self) -> None:
-        """Resolve activators and apply the effective target to every zone."""
+        """Periodic tick to resolve and apply targets."""
         now = dt_util.now()
-        changed = self._expire(now)
-
-        for zone_id in self.zone_order:
+        self._expire(now)
+        for zone_id in self.zones:
             zone = self.zones[zone_id]
             resolved = self._resolve_profile(zone_id, now)
             if resolved and self.active_profiles.get(zone_id) != resolved:
@@ -497,147 +287,24 @@ class ThermoManager:
                         ATTR_PROFILE_NAME: profile.name if profile else resolved,
                     },
                 )
-                changed = True
             await self._apply_zone(zone, now)
-
-        if changed:
-            self._save()
-
-    def _expire(self, now: datetime) -> bool:
-        changed = False
-
-        for bypass_id, bypass in list(self.bypasses.items()):
-            if bypass.until <= now:
-                self.bypasses.pop(bypass_id, None)
-                changed = True
-                self._fire(
-                    EVENT_BYPASS_ENDED,
-                    {ATTR_BYPASS: bypass.to_dict(), ATTR_ZONES: bypass.zones},
-                )
-
-        for zone_id, pin in list(self.pinned_profiles.items()):
-            until = pin.get("until")
-            if isinstance(until, datetime) and until <= now:
-                self.pinned_profiles.pop(zone_id, None)
-                self.active_profiles.pop(zone_id, None)
-                self._applied_mode.pop(zone_id, None)
-                changed = True
-                self._fire(
-                    EVENT_PROFILE_OVERRIDE_ENDED,
-                    {
-                        ATTR_ZONE_ID: zone_id,
-                        ATTR_PROFILE_ID: pin.get("profile_id"),
-                        ATTR_SOURCE: "expired",
-                    },
-                )
-
-        for zone_id, override in list(self.manual_overrides.items()):
-            until = override.get("until")
-            if not isinstance(until, datetime) or until <= now:
-                self.manual_overrides.pop(zone_id, None)
-                changed = True
-
-        return changed
-
-    def _profile_choice(
-        self, zone_id: str, moment: datetime
-    ) -> tuple[str | None, str]:
-        pin = self.pinned_profiles.get(zone_id)
-        pinned_profile = None
-        if pin:
-            profile_id = pin.get("profile_id")
-            until = pin.get("until")
-            if profile_id in self.profiles and (
-                not isinstance(until, datetime) or until > moment
-            ):
-                pinned_profile = profile_id
-        return resolve_profile_choice(
-            zone_id=zone_id,
-            moment=moment,
-            profiles=self.profiles.keys(),
-            activators=self.activators.values(),
-            weekly=self.weekly_profiles.get(zone_id),
-            pinned_profile=pinned_profile,
-            active_profile=self.active_profiles.get(zone_id),
-            default_profile=self._default_profile_id(),
-            condition_checker=self._condition_state,
-        )
-
-    def _resolve_profile(self, zone_id: str, now: datetime) -> str | None:
-        pin = self.pinned_profiles.get(zone_id)
-        if pin:
-            profile_id = pin.get("profile_id")
-            until = pin.get("until")
-            if profile_id not in self.profiles or (
-                isinstance(until, datetime) and until <= now
-            ):
-                self.pinned_profiles.pop(zone_id, None)
-        profile_id, _source = self._profile_choice(zone_id, now)
-        return profile_id
-
-    def _condition_state(self, entity_id: str) -> str | None:
-        state = self.hass.states.get(entity_id)
-        return state.state if state is not None else None
-
-    def _effective_target(
-        self, zone: Zone, now: datetime
-    ) -> tuple[float | None, str]:
-        if not self.enabled or zone.id in self.disabled_zones:
-            return self._climate_target(zone), "disabled"
-
-        bypass = active_bypass(self.bypasses.values(), zone.id, now)
-        if bypass is not None:
-            base = self._base_target(zone, now)
-            return bypass.resolve(base), "bypass"
-
-        override = self.manual_overrides.get(zone.id)
-        if override:
-            until = override.get("until")
-            if not isinstance(until, datetime) or until > now:
-                temperature = override.get("temperature")
-                if temperature is not None:
-                    return float(temperature), "override"
-
-        target = self._base_target(zone, now)
-        return target, "profile"
-
-    def _base_target(self, zone: Zone, now: datetime) -> float:
-        profile = self._active_profile_for_zone(zone.id)
-        if profile is not None:
-            return resolve_target(profile, zone, now, zone.default_temp)
-        climate_target = self._climate_target(zone)
-        if climate_target is not None:
-            return climate_target
-        return zone.default_temp
-
-    def _active_profile_for_zone(self, zone_id: str) -> Profile | None:
-        profile_id = self.active_profiles.get(zone_id)
-        return self.profiles.get(profile_id) if profile_id else None
+        self._save()
 
     async def _apply_zone(self, zone: Zone, now: datetime) -> None:
+        """Apply target to a single zone."""
         target, source = self._effective_target(zone, now)
         if target is not None:
             target = zone.clamp(target)
-
         previous = self.effective_targets.get(zone.id)
         self.effective_targets[zone.id] = target
-        if (
-            target is not None
-            and (previous is None or abs(previous - target) >= 0.05)
-        ):
+        if target is not None and (previous is None or abs(previous - target) >= 0.05):
             self._fire(
                 EVENT_TARGET_CHANGED,
-                {
-                    ATTR_ZONE_ID: zone.id,
-                    ATTR_TARGET: target,
-                    ATTR_SOURCE: source,
-                },
+                {ATTR_ZONE_ID: zone.id, ATTR_TARGET: target, ATTR_SOURCE: source},
             )
-
         if target is None or source == "disabled":
             self._desired.pop(zone.id, None)
             return
-
         desired = self._desired.get(zone.id)
         actual = self._climate_target(zone)
         needs_apply = desired is None or abs(desired - target) >= 0.05
@@ -650,19 +317,65 @@ class ThermoManager:
             and (actual is None or abs(actual - target) > 0.4)
         ):
             needs_apply = True
-
         if needs_apply:
             await self._set_temperature(zone, target, now)
-
-        profile = self._active_profile_for_zone(zone.id)
+        profile = self.profiles.get(self.active_profiles.get(zone.id))
         mode = profile.hvac_mode if profile else None
         if mode and self._applied_mode.get(zone.id) != mode:
             await self._set_hvac_mode(zone, mode)
             self._applied_mode[zone.id] = mode
 
+    def _effective_target(
+        self, zone: Zone, now: datetime
+    ) -> tuple[float | None, str]:
+        """Calculate effective target with precedence."""
+        if not self.enabled or zone.id in self.disabled_zones:
+            return self._climate_target(zone), "disabled"
+        bypass = active_bypass(self.bypasses.values(), zone.id, now)
+        if bypass is not None:
+            base = self._base_target(zone, now)
+            return bypass.resolve(base), "bypass"
+        override = self.manual_overrides.get(zone.id)
+        if override:
+            until = override.get("until")
+            if not isinstance(until, datetime) or until > now:
+                temperature = override.get("temperature")
+                if temperature is not None:
+                    return float(temperature), "override"
+        target = self._base_target(zone, now)
+        return target, "profile"
+
+    def _base_target(self, zone: Zone, now: datetime) -> float:
+        """Get base target from active profile."""
+        profile_id = self.active_profiles.get(zone.id)
+        profile = self.profiles.get(profile_id)
+        if profile is not None:
+            curve = profile.curves.get(zone.id, {}).get(_day_key(now))
+            if curve:
+                hour = now.hour
+                return curve[hour] if 0 <= hour < 24 else zone.default_temp
+        climate_target = self._climate_target(zone)
+        if climate_target is not None:
+            return climate_target
+        return zone.default_temp
+
+    def _climate_target(self, zone: Zone) -> float | None:
+        """Read current target from climate entity."""
+        state = self.hass.states.get(zone.climate_entity)
+        if state is None or state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN, "off"}:
+            return None
+        value = state.attributes.get("temperature")
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     async def _set_temperature(
         self, zone: Zone, target: float, now: datetime
     ) -> None:
+        """Set temperature on climate entity."""
         state = self.hass.states.get(zone.climate_entity)
         if state is None or state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
             return
@@ -673,20 +386,14 @@ class ThermoManager:
             await self.hass.services.async_call(
                 "climate",
                 "set_temperature",
-                {
-                    ATTR_ENTITY_ID: zone.climate_entity,
-                    ATTR_TEMPERATURE: target,
-                },
+                {"entity_id": zone.climate_entity, "temperature": target},
                 blocking=False,
             )
-        except Exception:  # a broken climate must not stop the other zones
-            _LOGGER.exception(
-                "Could not set temperature %.1f on %s",
-                target,
-                zone.climate_entity,
-            )
+        except Exception:
+            _LOGGER.exception("Could not set temperature on %s", zone.climate_entity)
 
     async def _set_hvac_mode(self, zone: Zone, mode: str) -> None:
+        """Set HVAC mode on climate entity."""
         state = self.hass.states.get(zone.climate_entity)
         if state is None or state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
             return
@@ -694,16 +401,15 @@ class ThermoManager:
             await self.hass.services.async_call(
                 "climate",
                 "set_hvac_mode",
-                {ATTR_ENTITY_ID: zone.climate_entity, "hvac_mode": mode},
+                {"entity_id": zone.climate_entity, "hvac_mode": mode},
                 blocking=False,
             )
         except Exception:
-            _LOGGER.exception(
-                "Could not set hvac mode %s on %s", mode, zone.climate_entity
-            )
+            _LOGGER.exception("Could not set hvac mode on %s", zone.climate_entity)
 
     @callback
-    def _handle_state_change(self, event: Event) -> None:
+    def _handle_state_change(self, event: Any) -> None:
+        """Handle climate state changes for manual override detection."""
         entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
@@ -712,9 +418,8 @@ class ThermoManager:
         zone = self._zone_for_climate(entity_id)
         if zone is None:
             return
-        if new_state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN, STATE_OFF}:
+        if new_state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN, "off"}:
             return
-
         now = dt_util.now()
         ignore_until = self._ignore_until.get(zone.id)
         if ignore_until is not None and now < ignore_until:
@@ -723,331 +428,71 @@ class ThermoManager:
             return
         if active_bypass(self.bypasses.values(), zone.id, now) is not None:
             return
-
-        actual = new_state.attributes.get(ATTR_TEMPERATURE)
-        if actual is None:
+        new_temp = new_state.attributes.get("temperature")
+        old_temp = old_state.attributes.get("temperature") if old_state else None
+        if new_temp is None or old_temp is None:
             return
         try:
-            actual = float(actual)
+            new_temp = float(new_temp)
+            old_temp = float(old_temp)
         except (TypeError, ValueError):
             return
-
-        old_temperature = (
-            old_state.attributes.get(ATTR_TEMPERATURE) if old_state else None
-        )
-        if old_temperature is not None:
-            try:
-                if abs(float(old_temperature) - actual) < 0.05:
-                    return
-            except (TypeError, ValueError):
-                pass
-
-        desired = self._desired.get(zone.id)
-        if desired is None or abs(actual - desired) < 0.3:
+        if abs(new_temp - old_temp) < 0.5:
             return
-
-        hold = self.settings["manual_hold"]
-        if hold <= 0:
+        hold_minutes = self.settings["manual_hold"]
+        if hold_minutes <= 0:
             return
-
-        until = now + timedelta(minutes=hold)
-        self.manual_overrides[zone.id] = {
-            "temperature": zone.clamp(actual),
-            "until": until,
-        }
-        self._desired[zone.id] = zone.clamp(actual)
-        self._last_apply[zone.id] = now
+        until = now + timedelta(minutes=hold_minutes)
+        self.manual_overrides[zone.id] = {"temperature": new_temp, "until": until}
         self._fire(
             EVENT_MANUAL_OVERRIDE,
-            {
-                ATTR_ZONE_ID: zone.id,
-                ATTR_TEMPERATURE: zone.clamp(actual),
-                ATTR_UNTIL: until.isoformat(),
-            },
+            {ATTR_ZONE_ID: zone.id, ATTR_TARGET: new_temp, "until": until.isoformat()},
         )
         self._save()
-        self._notify()
 
-    # ------------------------------------------------------------------
-    # State exposed to entities and cards
-    # ------------------------------------------------------------------
+    def _zone_for_climate(self, entity_id: str) -> Zone | None:
+        """Find zone by climate entity."""
+        for zone in self.zones.values():
+            if zone.climate_entity == entity_id:
+                return zone
+        return None
 
-    def _climate_target(self, zone: Zone) -> float | None:
-        state = self.hass.states.get(zone.climate_entity)
-        if state is None:
-            return None
-        value = state.attributes.get(ATTR_TEMPERATURE)
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
+    def _default_profile_id(self) -> str | None:
+        """Get default profile ID."""
+        if "comfort" in self.profiles:
+            return "comfort"
+        return next(iter(self.profiles), None)
 
-    def current_temperature(self, zone: Zone) -> float | None:
-        if zone.temperature_sensor:
-            state = self.hass.states.get(zone.temperature_sensor)
-            if state is not None and state.state not in {
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            }:
-                try:
-                    return float(state.state)
-                except (TypeError, ValueError):
-                    pass
-        state = self.hass.states.get(zone.climate_entity)
-        if state is None:
-            return None
-        value = state.attributes.get("current_temperature")
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
+    def _fire(self, event_type: str, data: dict[str, Any]) -> None:
+        """Fire an event."""
+        self.hass.bus.async_fire(event_type, data)
 
-    def target_temperature(self, zone_id: str) -> float | None:
-        return self.effective_targets.get(zone_id)
-
-    def active_profile_id(self, zone_id: str) -> str | None:
-        pin = self.pinned_profiles.get(zone_id)
-        if pin and pin.get("profile_id") in self.profiles:
-            until = pin.get("until")
-            if not isinstance(until, datetime) or until > dt_util.now():
-                return str(pin["profile_id"])
-        return self.active_profiles.get(zone_id)
-
-    def active_profile_name(self, zone_id: str) -> str | None:
-        profile = self._active_profile_for_zone(zone_id)
-        return profile.name if profile else None
-
-    def profile_source(self, zone_id: str, now: datetime | None = None) -> str:
-        """Return what is driving the zone (override/activator/weekly/...)."""
-        return self._profile_choice(zone_id, now or dt_util.now())[1]
-
-    def weekly_for_zone(self, zone_id: str) -> dict[str, str]:
-        """Return the weekly plan (day -> profile id) for a zone."""
-        return dict(self.weekly_profiles.get(zone_id) or {})
-
-    def weekly_profile_today(self, zone_id: str) -> str | None:
-        """Return the planned profile for today, if any."""
-        return self.weekly_for_zone(zone_id).get(day_key(dt_util.now()))
-
-    def is_pinned(self, zone_id: str) -> bool:
-        return zone_id in self.pinned_profiles
-
-    def bypass_for_zone(self, zone_id: str) -> Bypass | None:
-        return active_bypass(self.bypasses.values(), zone_id, dt_util.now())
-
-    def bypass_remaining(self, zone_id: str) -> float | None:
-        bypass = self.bypass_for_zone(zone_id)
-        if bypass is None:
-            return None
-        return remaining_seconds(bypass, dt_util.now())
-
-    def is_override_active(self, zone_id: str) -> bool:
-        override = self.manual_overrides.get(zone_id)
-        if not override:
-            return False
-        until = override.get("until")
-        return isinstance(until, datetime) and until > dt_util.now()
-
-    def is_zone_enabled(self, zone_id: str) -> bool:
-        return self.enabled and zone_id not in self.disabled_zones
-
-    def next_change_for(self, zone_id: str) -> datetime | None:
-        zone = self.zones.get(zone_id)
-        if zone is None:
-            return None
-        now = dt_util.now()
-        bypass = self.bypass_for_zone(zone_id)
-        if bypass is not None:
-            return bypass.until
-        override = self.manual_overrides.get(zone_id)
-        if override and isinstance(override.get("until"), datetime):
-            until = override["until"]
-            if until > now:
-                return until
-        pin = self.pinned_profiles.get(zone_id)
-        if pin and isinstance(pin.get("until"), datetime):
-            until = pin["until"]
-            if until > now:
-                return until
-        profile = self._active_profile_for_zone(zone_id)
-        return next_change(
-            profile,
-            self.activators.values(),
-            zone,
-            now,
-            self._condition_state,
-            zone.default_temp,
-        )
-
-    def _profile_for_moment(
-        self, zone_id: str, moment: datetime
-    ) -> Profile | None:
-        """Return the profile that would drive a zone at ``moment`` (no side effects)."""
-        profile_id, _source = self._profile_choice(zone_id, moment)
-        return self.profiles.get(profile_id) if profile_id else None
-
-    def target_forecast(self, zone: Zone, now: datetime | None = None) -> list[float]:
-        """Return the effective target for each hour of today (0-23)."""
-        now = now or dt_util.now()
-        if not self.enabled or zone.id in self.disabled_zones:
-            current = self._climate_target(zone)
-            return [current if current is not None else zone.default_temp] * 24
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        out: list[float] = []
-        for hour in range(24):
-            moment = start + timedelta(hours=hour)
-            profile = self._profile_for_moment(zone.id, moment)
-            if profile is not None:
-                out.append(
-                    round(
-                        resolve_target(profile, zone, moment, zone.default_temp), 2
-                    )
-                )
-            else:
-                climate = self._climate_target(zone)
-                out.append(
-                    climate if climate is not None else zone.default_temp
-                )
-        return out
-
-    def _zone_snapshot(
-        self, zone: Zone, now: datetime | None = None
-    ) -> dict[str, Any]:
-        now = now or dt_util.now()
-        _resolved, profile_source = self._profile_choice(zone.id, now)
-        pin = self.pinned_profiles.get(zone.id) or {}
-        weekly = dict(self.weekly_profiles.get(zone.id) or {})
-        return {
-            "id": zone.id,
-            "name": zone.name,
-            "climate_entity": zone.climate_entity,
-            "temperature_sensor": zone.temperature_sensor,
-            "min_temp": zone.min_temp,
-            "max_temp": zone.max_temp,
-            "default_temp": zone.default_temp,
-            "current_temperature": self.current_temperature(zone),
-            "target_temperature": self.target_temperature(zone.id),
-            "active_profile": self.active_profile_id(zone.id),
-            "active_profile_name": self.active_profile_name(zone.id),
-            "profile_source": profile_source,
-            "weekly_profiles": weekly,
-            "weekly_profile_today": weekly.get(day_key(now)),
-            "pinned": self.is_pinned(zone.id),
-            "override_until": _iso(pin.get("until")),
-            "bypass_active": self.bypass_for_zone(zone.id) is not None,
-            "bypass_remaining": self.bypass_remaining(zone.id),
-            "override_active": self.is_override_active(zone.id),
-            "enabled": self.is_zone_enabled(zone.id),
-            "next_change": _iso(self.next_change_for(zone.id)),
-            "forecast": self.target_forecast(zone),
-            "entity_ids": {
-                key: self._entity_id(domain, zone.id, key)
-                for key, domain in _ENTITY_DOMAINS.items()
-            },
-        }
-
-    async def async_get_config(self) -> dict[str, Any]:
-        """Return the full snapshot consumed by the Lovelace cards."""
-        now = dt_util.now()
-        return {
-            "version": VERSION,
-            "entry_id": self.entry.entry_id,
-            "enabled": self.enabled,
-            "disabled_zones": sorted(self.disabled_zones),
-            "settings": {
-                "manual_hold": self.settings["manual_hold"],
-                "reassert_interval": self.settings["reassert_interval"],
-                "scan_interval": self.settings["scan_interval"],
-            },
-            "zones": [
-                self._zone_snapshot(zone, now) for zone in self.zones.values()
-            ],
-            "profiles": [profile.to_dict() for profile in self.profiles.values()],
-            "weekly_profiles": {
-                zone_id: dict(days)
-                for zone_id, days in self.weekly_profiles.items()
-            },
-            "activators": [
-                activator.to_dict() for activator in self.activators.values()
-            ],
-            "bypasses": [
-                {
-                    **bypass.to_dict(),
-                    "remaining": remaining_seconds(bypass, now),
-                }
-                for bypass in self.bypasses.values()
-                if bypass.until > now
-            ],
-            "active_profiles": dict(self.active_profiles),
-            "pinned_profiles": {
-                zone_id: pin.get("profile_id")
-                for zone_id, pin in self.pinned_profiles.items()
-            },
-            "manual_overrides": {
-                zone_id: {
-                    "temperature": override.get("temperature"),
-                    "until": _iso(override.get("until")),
-                }
-                for zone_id, override in self.manual_overrides.items()
-            },
-            "hub": {
-                "entity_ids": {
-                    key: self._entity_id(domain, HUB_ZONE_ID, key)
-                    for key, domain in _ENTITY_DOMAINS.items()
-                },
-                "enabled": self.enabled,
-                "bypass_active": any(
-                    bypass.until > now for bypass in self.bypasses.values()
-                ),
-            },
-        }
-
-    def _entity_id(self, domain: str, zone_id: str, key: str) -> str | None:
-        registry = er.async_get(self.hass)
-        unique_id = entity_unique_id(self.entry.entry_id, zone_id, key)
-        return registry.async_get_entity_id(domain, DOMAIN, unique_id)
-
-    # ------------------------------------------------------------------
-    # User actions
-    # ------------------------------------------------------------------
+    def _notify(self) -> None:
+        """Notify listeners."""
+        pass
 
     async def async_set_profile(
         self,
         profile_id: str,
         zones: list[str] | None = None,
         duration: Any = None,
-        until: Any = None,
-        source: str = "manual",
     ) -> None:
-        """Pin a profile on some or all zones (temporary override)."""
+        """Pin a profile on zones."""
+        zone_ids = self._resolve_zone_ids(zones)
         if profile_id == PROFILE_AUTO:
-            await self.async_clear_profile_override(zones=zones, source=source)
+            for zone_id in zone_ids:
+                self.pinned_profiles.pop(zone_id, None)
+            self._save()
+            self._notify()
             return
         if profile_id not in self.profiles:
             raise ValueError("unknown_profile")
-        zone_ids = self._resolve_zone_ids(zones)
+        minutes = parse_duration_minutes(duration)
         now = dt_util.now()
-        end: datetime | None = None
-        parsed_until = parse_until(until, now)
-        if parsed_until is not None:
-            if parsed_until <= now:
-                raise ValueError("until_in_the_past")
-            end = parsed_until
-        else:
-            minutes = parse_duration_minutes(duration)
-            if minutes:
-                end = now + timedelta(minutes=minutes)
+        until = now + timedelta(minutes=minutes) if minutes else None
         profile = self.profiles[profile_id]
         for zone_id in zone_ids:
-            self.pinned_profiles[zone_id] = {
-                "profile_id": profile_id,
-                "until": end,
-                "source": source,
-            }
+            self.pinned_profiles[zone_id] = {"profile_id": profile_id, "until": until}
             self.active_profiles[zone_id] = profile_id
             self.manual_overrides.pop(zone_id, None)
             self._applied_mode.pop(zone_id, None)
@@ -1057,101 +502,11 @@ class ThermoManager:
                     ATTR_ZONE_ID: zone_id,
                     ATTR_PROFILE_ID: profile_id,
                     ATTR_PROFILE_NAME: profile.name,
-                    ATTR_SOURCE: source,
-                },
-            )
-            self._fire(
-                EVENT_PROFILE_OVERRIDE_STARTED,
-                {
-                    ATTR_ZONE_ID: zone_id,
-                    ATTR_PROFILE_ID: profile_id,
-                    ATTR_PROFILE_NAME: profile.name,
-                    ATTR_SOURCE: source,
-                    ATTR_UNTIL: _iso(end),
+                    ATTR_SOURCE: "manual",
                 },
             )
         self._save()
         self._notify()
-
-    async def async_clear_profile_override(
-        self,
-        zones: list[str] | None = None,
-        source: str = "manual",
-    ) -> None:
-        """Remove the temporary profile override and return to the plan."""
-        zone_ids = self._resolve_zone_ids(zones)
-        changed = False
-        now = dt_util.now()
-        for zone_id in zone_ids:
-            pin = self.pinned_profiles.pop(zone_id, None)
-            if pin is None:
-                continue
-            changed = True
-            self.active_profiles.pop(zone_id, None)
-            resolved = self._resolve_profile(zone_id, now)
-            if resolved:
-                self.active_profiles[zone_id] = resolved
-            self._applied_mode.pop(zone_id, None)
-            self._fire(
-                EVENT_PROFILE_OVERRIDE_ENDED,
-                {
-                    ATTR_ZONE_ID: zone_id,
-                    ATTR_PROFILE_ID: pin.get("profile_id"),
-                    ATTR_SOURCE: source,
-                },
-            )
-        if changed:
-            self._save()
-            self._notify()
-
-    async def async_set_weekday_profile(
-        self,
-        days: list[str] | str | None = None,
-        profile_id: str = PROFILE_AUTO,
-        zones: list[str] | None = None,
-    ) -> None:
-        """Assign a profile to one or more weekdays for the selected zones."""
-        day_list = expand_days(days)
-        if days is not None and not day_list:
-            raise ValueError("unknown_day")
-        if profile_id != PROFILE_AUTO and profile_id not in self.profiles:
-            raise ValueError("unknown_profile")
-        zone_ids = self._resolve_zone_ids(zones)
-        changed = False
-        for zone_id in zone_ids:
-            plan = dict(self.weekly_profiles.get(zone_id) or {})
-            for day in day_list:
-                if profile_id == PROFILE_AUTO:
-                    plan.pop(day, None)
-                else:
-                    plan[day] = profile_id
-            if plan:
-                self.weekly_profiles[zone_id] = plan
-            else:
-                self.weekly_profiles.pop(zone_id, None)
-            changed = True
-            self._fire(
-                EVENT_WEEKLY_CHANGED,
-                {
-                    ATTR_ZONE_ID: zone_id,
-                    ATTR_DAYS: day_list,
-                    ATTR_PROFILE_ID: None
-                    if profile_id == PROFILE_AUTO
-                    else profile_id,
-                    ATTR_SOURCE: "service",
-                },
-            )
-        if changed:
-            self._save()
-            self._notify()
-
-    async def async_clear_weekday_profile(
-        self,
-        days: list[str] | str | None = None,
-        zones: list[str] | None = None,
-    ) -> None:
-        """Clear weekday assignments (all days when ``days`` is omitted)."""
-        await self.async_set_weekday_profile(days, PROFILE_AUTO, zones)
 
     async def async_start_bypass(
         self,
@@ -1162,16 +517,15 @@ class ThermoManager:
         until: Any = None,
         source: str = "service",
     ) -> Bypass:
-        """Create a timed bypass. Without temp/offset it freezes the target."""
+        """Start a timed bypass."""
+        import uuid
         zone_ids = self._resolve_zone_ids(zones)
         if temperature is not None and offset is not None:
             raise ValueError("bypass_value_ambiguous")
         now = dt_util.now()
-        end = resolve_end(duration, until, now)
-
+        end = resolve_end(duration, until, now, default_minutes=60)
         created: list[Bypass] = []
         if temperature is None and offset is None:
-            # Freeze: remember the current target of every selected zone.
             for zone_id in zone_ids:
                 base = self._base_target(self.zones[zone_id], now)
                 bypass = Bypass(
@@ -1196,7 +550,6 @@ class ThermoManager:
             )
             bypass.validate()
             created.append(bypass)
-
         for bypass in created:
             self.bypasses[bypass.id] = bypass
         for zone_id in zone_ids:
@@ -1204,110 +557,95 @@ class ThermoManager:
         for bypass in created:
             self._fire(
                 EVENT_BYPASS_STARTED,
-                {ATTR_BYPASS: bypass.to_dict(), ATTR_ZONES: zone_ids},
+                {ATTR_BYPASS: bypass.to_dict(), ATTR_ZONES: bypass.zones},
             )
         self._save()
         self._notify()
         return created[0]
 
-    async def async_stop_bypass(self, zones: list[str] | None = None) -> int:
-        """Cancel bypasses, optionally limited to some zones."""
-        if zones is None:
-            selected = set(self.zones)
-        else:
-            selected = set(self._resolve_zone_ids(zones))
-        removed = 0
-        for bypass_id, bypass in list(self.bypasses.items()):
-            if not bypass.zones or selected & set(bypass.zones):
-                self.bypasses.pop(bypass_id, None)
-                removed += 1
-                self._fire(
-                    EVENT_BYPASS_ENDED,
-                    {ATTR_BYPASS: bypass.to_dict(), ATTR_ZONES: bypass.zones},
-                )
-        if removed:
-            self._save()
-            self._notify()
-        return removed
+    async def async_stop_bypass(self, zones: list[str] | None = None) -> None:
+        """Stop bypasses for zones."""
+        zone_ids = set(self._resolve_zone_ids(zones))
+        to_remove = [
+            bid
+            for bid, bypass in self.bypasses.items()
+            if not bypass.zones or zone_ids.intersection(bypass.zones)
+        ]
+        for bid in to_remove:
+            bypass = self.bypasses.pop(bid)
+            self._fire(
+                EVENT_BYPASS_ENDED,
+                {ATTR_BYPASS: bypass.to_dict(), ATTR_ZONES: bypass.zones},
+            )
+        self._save()
+        self._notify()
 
     async def async_set_temperature(
         self,
-        zones: list[str] | None,
-        temperature: float,
+        zones: list[str] | None = None,
+        temperature: float | None = None,
         duration: Any = None,
-    ) -> Bypass:
-        """Temporary absolute temperature, implemented as a bypass."""
-        return await self.async_start_bypass(
-            zones=zones,
-            temperature=temperature,
-            duration=duration,
-            source="temperature",
-        )
+    ) -> None:
+        """Set a temporary temperature override."""
+        zone_ids = self._resolve_zone_ids(zones)
+        if temperature is None:
+            raise ValueError("temperature_required")
+        minutes = parse_duration_minutes(duration)
+        now = dt_util.now()
+        until = now + timedelta(minutes=minutes) if minutes else None
+        for zone_id in zone_ids:
+            self.manual_overrides[zone_id] = {
+                "temperature": temperature,
+                "until": until,
+            }
+        self._save()
+        self._notify()
 
     async def async_enable(
         self, enabled: bool, zones: list[str] | None = None
     ) -> None:
-        """Enable/disable automatic control globally or per zone."""
-        if zones is None:
-            self.enabled = bool(enabled)
+        """Enable or disable control."""
+        if zones:
+            zone_ids = self._resolve_zone_ids(zones)
+            if enabled:
+                self.disabled_zones.difference_update(zone_ids)
+            else:
+                self.disabled_zones.update(zone_ids)
         else:
-            for zone_id in self._resolve_zone_ids(zones):
-                if enabled:
-                    self.disabled_zones.discard(zone_id)
-                else:
-                    self.disabled_zones.add(zone_id)
+            self.enabled = enabled
         self._save()
         self._notify()
 
-    # ------------------------------------------------------------------
-    # Profile CRUD
-    # ------------------------------------------------------------------
-
-    async def async_create_profile(self, data: dict[str, Any]) -> Profile:
-        profile = Profile.from_dict(data)
-        profile.id = self._unique_profile_id(profile.name)
-        self._prepare_profile(profile)
+    async def async_create_profile(self, profile_dict: dict[str, Any]) -> Profile:
+        """Create a new profile."""
+        profile = Profile.from_dict(profile_dict)
+        if profile.id in self.profiles:
+            raise ValueError("profile_exists")
         self.profiles[profile.id] = profile
         self._save()
         self._notify()
         return profile
 
-    async def async_update_profile(self, data: dict[str, Any]) -> Profile:
-        profile_id = str(data.get("id") or "")
-        if profile_id not in self.profiles:
+    async def async_update_profile(self, profile_dict: dict[str, Any]) -> Profile:
+        """Update an existing profile."""
+        profile = Profile.from_dict(profile_dict)
+        if profile.id not in self.profiles:
             raise ValueError("unknown_profile")
-        profile = Profile.from_dict({**data, "id": profile_id})
-        self._prepare_profile(profile)
-        self.profiles[profile_id] = profile
-        for zone_id in self.zone_order:
-            if self.active_profiles.get(zone_id) == profile_id:
-                self._applied_mode.pop(zone_id, None)
+        self.profiles[profile.id] = profile
         self._save()
         self._notify()
         return profile
 
     async def async_delete_profile(self, profile_id: str) -> None:
+        """Delete a profile."""
         if profile_id not in self.profiles:
             raise ValueError("unknown_profile")
         self.profiles.pop(profile_id)
-        for key, activator in list(self.activators.items()):
-            if activator.profile_id == profile_id:
-                self.activators.pop(key, None)
         for zone_id, pin in list(self.pinned_profiles.items()):
             if pin.get("profile_id") == profile_id:
                 self.pinned_profiles.pop(zone_id, None)
-        for zone_id in list(self.weekly_profiles):
-            plan = {
-                day: pid
-                for day, pid in self.weekly_profiles[zone_id].items()
-                if pid != profile_id
-            }
-            if plan:
-                self.weekly_profiles[zone_id] = plan
-            else:
-                self.weekly_profiles.pop(zone_id, None)
         default = self._default_profile_id()
-        for zone_id in self.zone_order:
+        for zone_id in self.zones:
             if self.active_profiles.get(zone_id) == profile_id:
                 if default:
                     self.active_profiles[zone_id] = default
@@ -1318,108 +656,47 @@ class ThermoManager:
         self._notify()
 
     async def async_clone_profile(
-        self,
-        source_id: str,
-        name: str,
-        zones: list[str] | None = None,
+        self, source_id: str, name: str, zones: list[str] | None = None
     ) -> Profile:
+        """Clone a profile."""
+        import uuid
         source = self.profiles.get(source_id)
         if source is None:
             raise ValueError("unknown_profile")
-        clean_name = str(name or "").strip()
-        if not clean_name:
-            raise ValueError("profile_name_required")
-        selected = self._resolve_zone_ids(zones) if zones else None
-        clone = source.clone(self._unique_profile_id(clean_name), clean_name, selected)
-        self._prepare_profile(clone, selected)
-        self.profiles[clone.id] = clone
+        new_id = slugify(name) or f"{source_id}_clone_{uuid.uuid4().hex[:6]}"
+        if new_id in self.profiles:
+            new_id = f"{new_id}_{uuid.uuid4().hex[:6]}"
+        import copy
+        new_profile = copy.deepcopy(source)
+        new_profile.id = new_id
+        new_profile.name = name
+        if zones:
+            zone_ids = self._resolve_zone_ids(zones)
+            new_profile.targets = {
+                zid: source.targets.get(zid, 20.0) for zid in zone_ids
+            }
+            new_profile.curves = {
+                zid: dict(source.curves.get(zid, {})) for zid in zone_ids
+            }
+            new_profile.days = {
+                zid: list(source.days.get(zid, [])) for zid in zone_ids
+            }
+        self.profiles[new_id] = new_profile
         self._save()
         self._notify()
-        return clone
+        return new_profile
 
-    def _prepare_profile(
-        self, profile: Profile, zone_ids: list[str] | None = None
-    ) -> None:
-        targets = (
-            [self.zones[zone_id] for zone_id in zone_ids]
-            if zone_ids
-            else list(self.zones.values())
-        )
-        for zone in targets:
-            profile.ensure_zone(zone.id, zone.default_temp)
-        profile.validate()
-
-    def _unique_profile_id(self, name: str, exclude: str | None = None) -> str:
-        base = slugify(name, "profilo")
-        candidate = base
-        index = 2
-        while candidate in self.profiles and candidate != exclude:
-            candidate = f"{base}_{index}"
-            index += 1
-        return candidate
-
-    def _default_profile_id(self) -> str | None:
-        if "comfort" in self.profiles:
-            return "comfort"
-        return next(iter(self.profiles), None)
-
-    # ------------------------------------------------------------------
-    # Activator CRUD
-    # ------------------------------------------------------------------
-
-    async def async_create_activator(self, data: dict[str, Any]) -> Activator:
-        activator = Activator.from_dict(data)
-        activator.id = self._unique_activator_id(activator.name)
-        self._prepare_activator(activator)
-        self.activators[activator.id] = activator
+    async def async_reload(self) -> None:
+        """Reload profiles and activators."""
         self._save()
         self._notify()
-        return activator
-
-    async def async_update_activator(self, data: dict[str, Any]) -> Activator:
-        activator_id = str(data.get("id") or "")
-        if activator_id not in self.activators:
-            raise ValueError("unknown_activator")
-        activator = Activator.from_dict({**data, "id": activator_id})
-        self._prepare_activator(activator)
-        self.activators[activator_id] = activator
-        self._save()
-        self._notify()
-        return activator
-
-    async def async_delete_activator(self, activator_id: str) -> None:
-        if activator_id not in self.activators:
-            raise ValueError("unknown_activator")
-        self.activators.pop(activator_id)
-        self._save()
-        self._notify()
-
-    def _prepare_activator(self, activator: Activator) -> None:
-        if activator.zones:
-            activator.zones = [
-                self.zones[zone_id].id
-                for zone_id in self._resolve_zone_ids(activator.zones)
-            ]
-        activator.validate(set(self.profiles))
-
-    def _unique_activator_id(self, name: str) -> str:
-        base = slugify(name, "attivatore")
-        candidate = base
-        index = 2
-        while candidate in self.activators:
-            candidate = f"{base}_{index}"
-            index += 1
-        return candidate
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
 
     def _resolve_zone_ids(self, values: list[str] | None) -> list[str]:
+        """Resolve zone IDs from input."""
         if not values:
-            if not self.zone_order:
+            if not self.zones:
                 raise ValueError("no_zones_configured")
-            return list(self.zone_order)
+            return list(self.zones.keys())
         resolved: list[str] = []
         for value in values:
             zone_id = str(value)
@@ -1432,15 +709,6 @@ class ThermoManager:
             resolved.append(zone.id)
         return list(dict.fromkeys(resolved))
 
-    def _zone_for_climate(self, entity_id: str) -> Zone | None:
-        for zone in self.zones.values():
-            if zone.climate_entity == entity_id:
-                return zone
-        return None
-
-    def _fire(self, event_type: str, data: dict[str, Any]) -> None:
-        self.hass.bus.async_fire(event_type, data)
-
     async def async_update_zone(
         self,
         zone_id: str,
@@ -1451,76 +719,242 @@ class ThermoManager:
         max_temp: float | None = None,
         default_temp: float | None = None,
     ) -> None:
-        """Update zone settings and persist to config entry options."""
+        """Update zone settings."""
         if zone_id not in self.zones:
             raise ValueError("unknown_zone")
         zone = self.zones[zone_id]
-
-        new_name = name if name is not None else zone.name
-        new_climate = climate_entity if climate_entity is not None else zone.climate_entity
-        new_sensor = temperature_sensor if temperature_sensor is not None else zone.temperature_sensor
-        new_min = min_temp if min_temp is not None else zone.min_temp
-        new_max = max_temp if max_temp is not None else zone.max_temp
-        new_default = default_temp if default_temp is not None else zone.default_temp
-
-        if not new_name.strip():
-            raise ValueError("zone_name_required")
-        if not new_climate or not new_climate.startswith("climate."):
-            raise ValueError("zone_invalid_climate")
-        if new_max <= new_min:
-            raise ValueError("zone_invalid_limits")
-
+        if name is not None:
+            zone.name = name
+        if climate_entity is not None:
+            zone.climate_entity = climate_entity
+        if temperature_sensor is not None:
+            zone.temperature_sensor = temperature_sensor
+        if min_temp is not None:
+            zone.min_temp = min_temp
+        if max_temp is not None:
+            zone.max_temp = max_temp
+        if default_temp is not None:
+            zone.default_temp = default_temp
         options = dict(self.entry.options)
-        zones_list = [dict(z) for z in options.get(CONF_ZONES, [])]
-        if not zones_list and self.entry.data.get(CONF_ZONES):
-            zones_list = [dict(z) for z in self.entry.data[CONF_ZONES]]
-
-        found = False
-        for z in zones_list:
-            if z.get("id") == zone_id:
-                z["name"] = new_name
-                z["climate_entity"] = new_climate
-                z["temperature_sensor"] = new_sensor
-                z["min_temp"] = float(new_min)
-                z["max_temp"] = float(new_max)
-                z["default_temp"] = float(new_default)
-                found = True
+        zone_list = options.get(CONF_ZONES, [])
+        updated = False
+        for i, cfg in enumerate(zone_list):
+            if cfg.get("id") == zone_id:
+                zone_list[i] = zone.to_dict()
+                updated = True
                 break
-
-        if not found:
-            zones_list.append({
-                "id": zone_id,
-                "name": new_name,
-                "climate_entity": new_climate,
-                "temperature_sensor": new_sensor,
-                "min_temp": float(new_min),
-                "max_temp": float(new_max),
-                "default_temp": float(new_default),
-            })
-
-        options[CONF_ZONES] = zones_list
-        self.hass.config_entries.async_update_entry(self.entry, options=options)
-
-    async def async_reload(self) -> None:
-        """Re-evaluate the current state."""
-        await self.async_tick()
+        if updated:
+            options[CONF_ZONES] = zone_list
+            self.hass.config_entries.async_update_entry(self.entry, options=options)
         self._save()
         self._notify()
 
+    def current_temperature(self, zone: Zone) -> float | None:
+        """Read current temperature from sensor or climate."""
+        if zone.temperature_sensor:
+            state = self.hass.states.get(zone.temperature_sensor)
+            if state and state.state not in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
+                try:
+                    return float(state.state)
+                except (TypeError, ValueError):
+                    pass
+        return self._climate_target(zone)
+
+    def target_temperature(self, zone_id: str) -> float | None:
+        """Get effective target."""
+        return self.effective_targets.get(zone_id)
+
+    def active_profile_id(self, zone_id: str) -> str | None:
+        """Get active profile ID."""
+        pin = self.pinned_profiles.get(zone_id)
+        if pin and pin.get("profile_id") in self.profiles:
+            until = pin.get("until")
+            if not isinstance(until, datetime) or until > dt_util.now():
+                return str(pin["profile_id"])
+        return self.active_profiles.get(zone_id)
+
+    def active_profile_name(self, zone_id: str) -> str | None:
+        """Get active profile name."""
+        profile_id = self.active_profile_id(zone_id)
+        profile = self.profiles.get(profile_id)
+        return profile.name if profile else None
+
+    def is_pinned(self, zone_id: str) -> bool:
+        """Check if zone has pinned profile."""
+        return zone_id in self.pinned_profiles
+
+    def bypass_for_zone(self, zone_id: str) -> Bypass | None:
+        """Get active bypass for zone."""
+        return active_bypass(self.bypasses.values(), zone_id, dt_util.now())
+
+    def bypass_remaining(self, zone_id: str) -> float | None:
+        """Get remaining bypass seconds."""
+        bypass = self.bypass_for_zone(zone_id)
+        if bypass is None:
+            return None
+        return remaining_seconds(bypass, dt_util.now())
+
+    def is_override_active(self, zone_id: str) -> bool:
+        """Check if manual override is active."""
+        override = self.manual_overrides.get(zone_id)
+        if not override:
+            return False
+        until = override.get("until")
+        return isinstance(until, datetime) and until > dt_util.now()
+
+    def is_zone_enabled(self, zone_id: str) -> bool:
+        """Check if zone is enabled."""
+        return self.enabled and zone_id not in self.disabled_zones
+
+    @property
+    def zone_order(self) -> list[str]:
+        """Get zone order."""
+        return list(self.zones.keys())
+
+    async def async_get_config(self) -> dict[str, Any]:
+        """Get full config snapshot."""
+        from homeassistant.util import dt as dt_util
+        now = dt_util.now()
+        return {
+            "version": "0.3.0",
+            "entry_id": self._entry_id,
+            "enabled": self.enabled,
+            "disabled_zones": sorted(self.disabled_zones),
+            "settings": {
+                "manual_hold": self.settings["manual_hold"],
+                "reassert_interval": self.settings["reassert_interval"],
+                "scan_interval": self.settings["scan_interval"],
+            },
+            "zones": [self._zone_snapshot(zone, now) for zone in self.zones.values()],
+            "profiles": [profile.to_dict() for profile in self.profiles.values()],
+            "activators": [],
+            "bypasses": [
+                {**bypass.to_dict(), "remaining": remaining_seconds(bypass, now)}
+                for bypass in self.bypasses.values()
+                if bypass.until > now
+            ],
+            "active_profiles": dict(self.active_profiles),
+            "pinned_profiles": {
+                zone_id: pin.get("profile_id")
+                for zone_id, pin in self.pinned_profiles.items()
+            },
+            "manual_overrides": {
+                zone_id: {
+                    "temperature": override.get("temperature"),
+                    "until": _iso(override.get("until")),
+                }
+                for zone_id, override in self.manual_overrides.items()
+            },
+            "hub": {
+                "entity_ids": {
+                    key: self._entity_id(domain, "hub", key)
+                    for key, domain in _ENTITY_DOMAINS.items()
+                },
+                "enabled": self.enabled,
+                "bypass_active": any(
+                    bypass.until > now for bypass in self.bypasses.values()
+                ),
+            },
+        }
+
+    def _zone_snapshot(
+        self, zone: Zone, now: datetime
+    ) -> dict[str, Any]:
+        """Get zone snapshot."""
+        pin = self.pinned_profiles.get(zone.id) or {}
+        return {
+            "id": zone.id,
+            "name": zone.name,
+            "climate_entity": zone.climate_entity,
+            "temperature_sensor": zone.temperature_sensor,
+            "min_temp": zone.min_temp,
+            "max_temp": zone.max_temp,
+            "default_temp": zone.default_temp,
+            "current_temperature": self.current_temperature(zone),
+            "target_temperature": self.target_temperature(zone.id),
+            "active_profile": self.active_profile_id(zone.id),
+            "active_profile_name": self.active_profile_name(zone.id),
+            "pinned": self.is_pinned(zone.id),
+            "bypass_active": self.bypass_for_zone(zone.id) is not None,
+            "bypass_remaining": self.bypass_remaining(zone.id),
+            "override_active": self.is_override_active(zone.id),
+            "enabled": self.is_zone_enabled(zone.id),
+            "next_change": _iso(self.next_change_for(zone.id)),
+            "forecast": self.target_forecast(zone),
+            "entity_ids": {
+                key: self._entity_id(domain, zone.id, key)
+                for key, domain in _ENTITY_DOMAINS.items()
+            },
+        }
+
+    def _entity_id(self, domain: str, zone_id: str, key: str) -> str | None:
+        """Resolve entity ID from registry."""
+        unique = entity_unique_id(self._entry_id, zone_id, key)
+        ent_reg = er.async_get(self.hass)
+        entity = ent_reg.async_get_entity_id(domain, DOMAIN, unique)
+        return entity
+
+    def next_change_for(self, zone_id: str) -> datetime | None:
+        """Get next scheduled change (simplified: next hour boundary)."""
+        now = dt_util.now()
+        return now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+
+    def target_forecast(self, zone: Zone, now: datetime | None = None) -> list[float]:
+        """Get 24h forecast."""
+        from homeassistant.util import dt as dt_util
+        now = now or dt_util.now()
+        if not self.enabled or zone.id in self.disabled_zones:
+            current = self._climate_target(zone)
+            return [current if current is not None else zone.default_temp] * 24
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        out: list[float] = []
+        for hour in range(24):
+            moment = start + timedelta(hours=hour)
+            profile_id = self.active_profiles.get(zone.id)
+            profile = self.profiles.get(profile_id)
+            if profile:
+                curve = profile.curves.get(zone.id, {}).get(_day_key(moment))
+                if curve and 0 <= hour < 24:
+                    out.append(round(curve[hour], 2))
+                else:
+                    out.append(zone.default_temp)
+            else:
+                climate = self._climate_target(zone)
+                out.append(climate if climate is not None else zone.default_temp)
+        return out
+
 
 def _parse_datetime(value: Any) -> datetime | None:
+    """Parse ISO datetime string."""
+    if value is None or value == "":
+        return None
     if isinstance(value, datetime):
         return value
-    if not value:
-        return None
+    text = str(value).strip().replace("Z", "+00:00")
     try:
-        parsed = datetime.fromisoformat(str(value))
+        return datetime.fromisoformat(text)
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt_util.now().tzinfo)
-    return parsed
 
 
 def _iso(value: Any) -> str | None:
+    """Convert to ISO string."""
     return value.isoformat() if isinstance(value, datetime) else None
+
+
+def _day_key(moment: datetime) -> str:
+    """Get day key."""
+    days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    return days[moment.weekday()]
+
+
+_ENTITY_DOMAINS = {
+    "current_temperature": "sensor",
+    "target_temperature": "sensor",
+    "next_change": "sensor",
+    "bypass_remaining": "sensor",
+    "bypass_active": "binary_sensor",
+    "override_active": "binary_sensor",
+    "profile": "select",
+    "enabled": "switch",
+}

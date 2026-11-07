@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, esc, formatTemp, formatTime, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.3.0";
+import { DOMAIN, EVENT_TYPES, esc, formatTemp, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.3.0";
 
 class HaThermoGraphCard extends HTMLElement {
   constructor() {
@@ -10,7 +10,7 @@ class HaThermoGraphCard extends HTMLElement {
   static getConfigElement() { return document.createElement("ha-thermo-graph-card-editor"); }
   setConfig(config) {
     if (!config) throw new Error("Configurazione non valida");
-    this._config = { title: "Grafico", height: 180, show_legend: true, show_current: true, show_target: true, show_profile: true, show_next: true, ...config };
+    this._config = { title: "Grafico", height: 180, hours_to_show: 24, min_temp: null, max_temp: null, show_current: true, show_target: true, ...config };
     this._render();
   }
   set hass(hass) {
@@ -23,11 +23,29 @@ class HaThermoGraphCard extends HTMLElement {
   async _subscribe() { for (const et of EVENT_TYPES) { try { const unsub = await this._hass.connection.subscribeEvents(() => this._load(), et); this._unsubs.push(unsub); } catch (e) {} } }
   async _load() { if (!this._hass) return; try { this._data = await callWS(this._hass, { type: `${DOMAIN}/get_config` }); this._error = null; } catch (e) { this._error = e?.message || String(e); } this._render(); }
   _zone() { return findZone(this._data, this._config.zone); }
-  _profile(zone) { const id = zone?.active_profile; return (this._data?.profiles || []).find((p) => p.id === id); }
-  _render() {
+  async _fetchHistory(entityId) {
+    if (!this._hass || !entityId) return [];
+    const hours = this._config.hours_to_show || 24;
+    const now = new Date();
+    const startTime = new Date(now.getTime() - hours * 3600 * 1000);
+    try {
+      const history = await this._hass.callWS({
+        type: "history/history_during_period",
+        start_time: startTime.toISOString(),
+        end_time: now.toISOString(),
+        entity_ids: [entityId],
+        minimal_response: true,
+        no_attributes: false,
+      });
+      return history?.[0] || [];
+    } catch (e) {
+      return [];
+    }
+  }
+  async _render() {
     if (!this.shadowRoot) return;
     const zone = this._zone();
-    const body = !this._data ? `<div class="empty">${this._error ? esc(this._error) : "Caricamento…"}</div>` : !zone ? `<div class="empty">Scegli il termostato con la matita</div>` : this._graph(zone);
+    const body = !this._data ? `<div class="empty">${this._error ? esc(this._error) : "Caricamento…"}</div>` : !zone ? `<div class="empty">Scegli il termostato con la matita</div>` : await this._graph(zone);
     this.shadowRoot.innerHTML = `<style>
       :host{display:block}
       .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:var(--ha-card-border-radius,12px);border:var(--ha-card-border-width,1px) solid var(--ha-card-border-color,var(--divider-color,transparent));box-shadow:var(--ha-card-box-shadow,none);padding:16px}
@@ -39,67 +57,78 @@ class HaThermoGraphCard extends HTMLElement {
       .empty{color:var(--secondary-text-color);padding:12px 0;text-align:center}
     </style><div class="card"><div class="head"><div class="title">${esc(this._config.title || (zone?.name || "Grafico"))}</div></div>${body}</div>`;
   }
-  _graph(zone) {
-    const profile = this._profile(zone);
+  async _graph(zone) {
     const cfg = this._config;
-    const chart = renderChart(zone, profile, this._data, {
-      show_target: cfg.show_target !== false,
-      show_current: cfg.show_current !== false,
-      height: cfg.height || 180,
-    });
-    return `<div class="chart-wrap">
-      ${chart}
-      ${cfg.show_legend!==false ? `<div class="legend">
-        ${cfg.show_target!==false ? `<span><i style="display:inline-block;width:10px;height:2px;background:var(--primary-color);margin-right:4px"></i>Target ${formatTemp(zone.target_temperature)}</span>` : ""}
-        ${cfg.show_current!==false && zone.current_temperature!=null ? `<span><i style="display:inline-block;width:10px;height:2px;background:var(--secondary-text-color);margin-right:4px"></i>Attuale ${formatTemp(zone.current_temperature)}</span>` : ""}
-        ${cfg.show_profile!==false ? `<span>Profilo: ${esc(zone.active_profile_name||"--")}</span>` : ""}
-        ${cfg.show_next!==false ? `<span>Prossimo: ${formatTime(zone.next_change)}</span>` : ""}
-      </div>` : ""}
+    const currentData = cfg.show_current !== false ? await this._fetchHistory(zone.temperature_sensor || zone.climate_entity) : [];
+    const targetData = cfg.show_target !== false ? await this._fetchHistory(zone.climate_entity) : [];
+    const currentPoints = currentData.map((s) => ({ x: new Date(s.last_changed).getTime(), y: parseFloat(s.state) })).filter((p) => !isNaN(p.y));
+    const targetPoints = targetData.map((s) => ({ x: new Date(s.last_changed).getTime(), y: parseFloat(s.state) })).filter((p) => !isNaN(p.y));
+    const allY = [...currentPoints, ...targetPoints].map((p) => p.y);
+    const minY = cfg.min_temp != null ? cfg.min_temp : (allY.length ? Math.min(...allY) - 1 : 15);
+    const maxY = cfg.max_temp != null ? cfg.max_temp : (allY.length ? Math.max(...allY) + 1 : 30);
+    const chart = this._drawChart(currentPoints, targetPoints, minY, maxY, cfg.height || 180);
+    return `<div class="chart-wrap">${chart}${this._legend(cfg)}</div>`;
+  }
+  _drawChart(current, target, minY, maxY, height) {
+    if (!current.length && !target.length) {
+      return `<svg class="curve" viewBox="0 0 400 ${height}"><text x="200" y="${height / 2}" text-anchor="middle" fill="var(--secondary-text-color)">Nessun dato storico</text></svg>`;
+    }
+    const now = Date.now();
+    const hours = this._config.hours_to_show || 24;
+    const startTime = now - hours * 3600 * 1000;
+    const width = 400;
+    const xScale = (t) => ((t - startTime) / (hours * 3600 * 1000)) * width;
+    const yScale = (v) => height - ((v - minY) / (maxY - minY)) * height;
+    const pathFromPoints = (points) => {
+      if (!points.length) return "";
+      const sorted = [...points].sort((a, b) => a.x - b.x);
+      return sorted.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x).toFixed(1)} ${yScale(p.y).toFixed(1)}`).join(" ");
+    };
+    const currentPath = pathFromPoints(current);
+    const targetPath = pathFromPoints(target);
+    return `<svg class="curve" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+      <line x1="0" y1="${yScale(minY)}" x2="${width}" y2="${yScale(minY)}" stroke="var(--divider-color)" stroke-width="1"/>
+      <line x1="0" y1="${yScale(maxY)}" x2="${width}" y2="${yScale(maxY)}" stroke="var(--divider-color)" stroke-width="1"/>
+      ${currentPath ? `<path d="${currentPath}" fill="none" stroke="var(--primary-color)" stroke-width="2"/>` : ""}
+      ${targetPath ? `<path d="${targetPath}" fill="none" stroke="var(--accent-color,#ff9800)" stroke-width="2" stroke-dasharray="4,2"/>` : ""}
+    </svg>`;
+  }
+  _legend(cfg) {
+    return `<div class="legend">
+      ${cfg.show_current !== false ? `<span><span style="display:inline-block;width:12px;height:2px;background:var(--primary-color);vertical-align:middle"></span> Attuale</span>` : ""}
+      ${cfg.show_target !== false ? `<span><span style="display:inline-block;width:12px;height:2px;background:var(--accent-color,#ff9800);vertical-align:middle;border-bottom:2px dashed var(--accent-color,#ff9800)"></span> Target</span>` : ""}
     </div>`;
   }
 }
 
 class HaThermoGraphCardEditor extends HTMLElement {
   constructor() { super(); this.attachShadow({ mode: "open" }); this._config = {}; this._zones = []; this._loaded = false; }
-  set hass(hass) { this._hass = hass; if (!this._loaded) { this._loaded = true; this._loadZones(); } }
-  setConfig(config) { this._config = { title: "Grafico", height: 180, show_legend: true, show_current: true, show_target: true, show_profile: true, show_next: true, ...config }; this._render(); }
-  async _loadZones() { if (!this._hass) return; try { const data = await callWS(this._hass, { type: `${DOMAIN}/get_config` }); this._zones = data?.zones || []; } catch (e) {} this._render(); }
+  set hass(h) { this._hass = h; if (!this._loaded) { this._loaded = true; this._loadZones(); } }
+  setConfig(config) { this._config = { title: "Grafico", height: 180, hours_to_show: 24, min_temp: null, max_temp: null, show_current: true, show_target: true, ...config }; this._render(); }
+  async _loadZones() { if (!this._hass) return; try { const d = await callWS(this._hass, { type: `${DOMAIN}/get_config` }); this._zones = d?.zones || []; } catch (e) {} this._render(); }
   _render() {
-    const zoneOpts = getZoneOptions(this._zones, false);
-    const currentZone = this._config.zone || "";
-    this.shadowRoot.innerHTML = `<style>
-      .form{display:grid;gap:12px;padding:8px 0}
-      label{display:grid;gap:4px;font-size:0.9rem}
-      input,select{padding:8px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color,#fff);color:var(--primary-text-color)}
-      .row{display:flex;align-items:center;gap:8px}
-      fieldset{border:1px solid var(--divider-color);border-radius:8px;padding:8px 12px}
-      legend{font-size:0.85rem;color:var(--secondary-text-color)}
-    </style><div class="form">
-      <label>Titolo<input type="text" data-field="title" value="${esc(this._config.title||"")}"></label>
-      <label>Termostato<select data-field="zone">${zoneOpts}</select></label>
-      <label>Altezza grafico (px)<input type="number" data-field="height" value="${esc(this._config.height||180)}"></label>
-      <fieldset><legend>Mostra</legend>
-        <label class="row"><input type="checkbox" data-field="show_legend" ${this._config.show_legend!==false?"checked":""}>Legenda</label>
-        <label class="row"><input type="checkbox" data-field="show_target" ${this._config.show_target!==false?"checked":""}>Target</label>
-        <label class="row"><input type="checkbox" data-field="show_current" ${this._config.show_current!==false?"checked":""}>Attuale</label>
-        <label class="row"><input type="checkbox" data-field="show_profile" ${this._config.show_profile!==false?"checked":""}>Profilo</label>
-        <label class="row"><input type="checkbox" data-field="show_next" ${this._config.show_next!==false?"checked":""}>Prossimo cambio</label>
-      </fieldset>
+    const allOpt = '<option value="all">Tutte le zone</option>', zoneOpts = getZoneOptions(this._zones, false);
+    this.shadowRoot.innerHTML = `<style>.form{display:grid;gap:12px;padding:8px 0}label{display:grid;gap:4px;font-size:0.9rem}input,select{padding:6px;border-radius:6px;border:1px solid var(--divider-color)}.row{display:flex;gap:8px}</style><div class="form">
+      <label>Titolo<input type="text" data-field="title" value="${esc(this._config.title || "")}"></label>
+      <label>Zona<select data-field="zone">${allOpt}${zoneOpts}</select></label>
+      <label>Altezza<input type="number" data-field="height" value="${esc(this._config.height || 180)}"></label>
+      <label>Ore storico<input type="number" data-field="hours_to_show" value="${esc(this._config.hours_to_show || 24)}"></label>
+      <div class="row"><label>Temp min<input type="number" data-field="min_temp" value="${esc(this._config.min_temp ?? "")}"></label><label>Temp max<input type="number" data-field="max_temp" value="${esc(this._config.max_temp ?? "")}"></label></div>
+      <label class="row"><input type="checkbox" data-field="show_current" ${this._config.show_current !== false ? "checked" : ""}>Mostra attuale</label>
+      <label class="row"><input type="checkbox" data-field="show_target" ${this._config.show_target !== false ? "checked" : ""}>Mostra target</label>
     </div>`;
-    this.shadowRoot.querySelectorAll("input,select").forEach((el) => el.addEventListener("change", () => this._changed()));
+    this.shadowRoot.querySelectorAll("input,select").forEach(el => el.addEventListener("change", () => this._changed()));
   }
   _changed() {
     const get = (f) => this.shadowRoot.querySelector(`[data-field="${f}"]`);
-    const config = { ...this._config, title: get("title")?.value, zone: get("zone")?.value, height: Number(get("height")?.value)||180 };
-    ["show_legend","show_target","show_current","show_profile","show_next"].forEach(k => { config[k] = get(k)?.checked; });
+    const config = { ...this._config, title: get("title")?.value, zone: get("zone")?.value };
+    ["height", "hours_to_show"].forEach(k => { const v = Number(get(k)?.value); if (v > 0) config[k] = v; });
+    ["min_temp", "max_temp"].forEach(k => { const v = get(k)?.value; config[k] = v === "" ? null : (v ? Number(v) : null); });
+    ["show_current", "show_target"].forEach(k => { config[k] = get(k)?.checked; });
     this._config = config;
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
   }
 }
 
-if (!customElements.get("ha-thermo-graph-card-editor")) customElements.define("ha-thermo-graph-card-editor", HaThermoGraphCardEditor);
 if (!customElements.get("ha-thermo-graph-card")) customElements.define("ha-thermo-graph-card", HaThermoGraphCard);
-window.customCards = window.customCards || [];
-if (!window.customCards.some(c => c.type === "ha-thermo-graph-card")) {
-  window.customCards.push({ type: "ha-thermo-graph-card", name: "HA Thermo Grafico", description: "Grafico 24h di un termostato.", preview: true, getEntitySuggestion: (hass, entityId) => entityId.startsWith("climate.") ? { config: { type: "custom:ha-thermo-graph-card", zone: entityId } } : null });
-}
+if (!customElements.get("ha-thermo-graph-card-editor")) customElements.define("ha-thermo-graph-card-editor", HaThermoGraphCardEditor);

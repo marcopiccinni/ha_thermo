@@ -1,4 +1,4 @@
-"""Websocket API used by the bundled Lovelace cards."""
+"""Websocket API for HA Thermo."""
 
 from __future__ import annotations
 
@@ -10,15 +10,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
-from .const import (
-    ATTR_ACTIVATOR_ID,
-    ATTR_DAY,
-    ATTR_DAYS,
-    ATTR_PROFILE,
-    ATTR_PROFILE_ID,
-    ATTR_ZONE_ID,
-    DOMAIN,
-)
+from .const import ATTR_PROFILE_ID, ATTR_ZONE_ID, DOMAIN
 from .manager import ThermoManager
 
 _ZONES = vol.Optional("zones")
@@ -50,7 +42,7 @@ async def _execute(
     except ValueError as err:
         connection.send_error(msg["id"], "invalid_input", str(err))
         return
-    except Exception as err:  # noqa: BLE001 - report failures to the card
+    except Exception as err:
         connection.send_error(msg["id"], "failed", str(err))
         return
     connection.send_result(msg["id"], result)
@@ -93,121 +85,6 @@ async def ws_set_profile(
         msg,
         lambda: manager.async_set_profile(
             msg["profile"], msg.get("zones"), msg.get("duration")
-        ),
-    )
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): f"{DOMAIN}/weekly/set",
-        vol.Required(ATTR_ZONE_ID): cv.string,
-        vol.Optional(ATTR_DAYS): vol.All(cv.ensure_list, [cv.string]),
-        vol.Optional(ATTR_DAY): cv.string,
-        vol.Required(ATTR_PROFILE): vol.Any(cv.string, vol.Equal("__auto__")),
-    }
-)
-@websocket_api.async_response
-async def ws_set_weekday_profile(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict,
-) -> None:
-    manager = _manager(hass, connection, msg)
-    if manager is None:
-        return
-    days = msg.get(ATTR_DAYS)
-    if days is None and msg.get(ATTR_DAY) is not None:
-        days = [msg[ATTR_DAY]]
-    await _execute(
-        connection,
-        msg,
-        lambda: manager.async_set_weekday_profile(
-            days, msg[ATTR_PROFILE], [msg[ATTR_ZONE_ID]]
-        ),
-    )
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): f"{DOMAIN}/weekly/clear",
-        vol.Required(ATTR_ZONE_ID): cv.string,
-        vol.Optional(ATTR_DAYS): vol.All(cv.ensure_list, [cv.string]),
-        vol.Optional(ATTR_DAY): cv.string,
-    }
-)
-@websocket_api.async_response
-async def ws_clear_weekday_profile(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict,
-) -> None:
-    manager = _manager(hass, connection, msg)
-    if manager is None:
-        return
-    days = msg.get(ATTR_DAYS)
-    if days is None and msg.get(ATTR_DAY) is not None:
-        days = [msg[ATTR_DAY]]
-    await _execute(
-        connection,
-        msg,
-        lambda: manager.async_clear_weekday_profile(
-            days, [msg[ATTR_ZONE_ID]]
-        ),
-    )
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): f"{DOMAIN}/override/set",
-        _ZONES: vol.All(cv.ensure_list, [cv.string]),
-        vol.Required(ATTR_PROFILE): cv.string,
-        _DURATION: _DURATION_SCHEMA,
-        vol.Optional("until"): cv.string,
-        vol.Optional("source"): cv.string,
-    }
-)
-@websocket_api.async_response
-async def ws_set_profile_override(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict,
-) -> None:
-    manager = _manager(hass, connection, msg)
-    if manager is None:
-        return
-    await _execute(
-        connection,
-        msg,
-        lambda: manager.async_set_profile(
-            msg[ATTR_PROFILE],
-            msg.get("zones"),
-            msg.get("duration"),
-            msg.get("until"),
-            source=str(msg.get("source") or "override"),
-        ),
-    )
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): f"{DOMAIN}/override/clear",
-        _ZONES: vol.All(cv.ensure_list, [cv.string]),
-    }
-)
-@websocket_api.async_response
-async def ws_clear_profile_override(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict,
-) -> None:
-    manager = _manager(hass, connection, msg)
-    if manager is None:
-        return
-    await _execute(
-        connection,
-        msg,
-        lambda: manager.async_clear_profile_override(
-            msg.get("zones"), source="card"
         ),
     )
 
@@ -262,7 +139,9 @@ async def ws_stop_bypass(
     if manager is None:
         return
     await _execute(
-        connection, msg, lambda: manager.async_stop_bypass(msg.get("zones"))
+        connection,
+        msg,
+        lambda: manager.async_stop_bypass(msg.get("zones")),
     )
 
 
@@ -287,7 +166,9 @@ async def ws_set_temperature(
         connection,
         msg,
         lambda: manager.async_set_temperature(
-            msg.get("zones"), msg["temperature"], msg.get("duration")
+            msg.get("zones"),
+            msg["temperature"],
+            msg.get("duration"),
         ),
     )
 
@@ -315,12 +196,23 @@ async def ws_set_enabled(
     )
 
 
+async def _created(awaitable: Awaitable[Any]) -> dict[str, Any]:
+    item = await awaitable
+    return {"id": item.id, "item": item.to_dict()}
+
+
+async def _updated(awaitable: Awaitable[Any]) -> dict[str, Any]:
+    item = await awaitable
+    return {"id": item.id, "item": item.to_dict()}
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/profile/create",
         vol.Required("profile"): dict,
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_create_profile(
     hass: HomeAssistant,
@@ -343,6 +235,7 @@ async def ws_create_profile(
         vol.Required("profile"): dict,
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_update_profile(
     hass: HomeAssistant,
@@ -365,6 +258,7 @@ async def ws_update_profile(
         vol.Required(ATTR_PROFILE_ID): cv.string,
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_delete_profile(
     hass: HomeAssistant,
@@ -384,11 +278,12 @@ async def ws_delete_profile(
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/profile/clone",
-        vol.Required("source_id"): cv.string,
+        vol.Required(ATTR_SOURCE_ID): cv.string,
         vol.Required("name"): cv.string,
         _ZONES: vol.All(cv.ensure_list, [cv.string]),
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_clone_profile(
     hass: HomeAssistant,
@@ -403,86 +298,10 @@ async def ws_clone_profile(
         msg,
         lambda: _created(
             manager.async_clone_profile(
-                msg["source_id"], msg["name"], msg.get("zones")
+                msg[ATTR_SOURCE_ID], msg["name"], msg.get("zones")
             )
         ),
     )
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): f"{DOMAIN}/activator/create",
-        vol.Required("activator"): dict,
-    }
-)
-@websocket_api.async_response
-async def ws_create_activator(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict,
-) -> None:
-    manager = _manager(hass, connection, msg)
-    if manager is None:
-        return
-    await _execute(
-        connection,
-        msg,
-        lambda: _created(manager.async_create_activator(msg["activator"])),
-    )
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): f"{DOMAIN}/activator/update",
-        vol.Required("activator"): dict,
-    }
-)
-@websocket_api.async_response
-async def ws_update_activator(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict,
-) -> None:
-    manager = _manager(hass, connection, msg)
-    if manager is None:
-        return
-    await _execute(
-        connection,
-        msg,
-        lambda: _updated(manager.async_update_activator(msg["activator"])),
-    )
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): f"{DOMAIN}/activator/delete",
-        vol.Required(ATTR_ACTIVATOR_ID): cv.string,
-    }
-)
-@websocket_api.async_response
-async def ws_delete_activator(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict,
-) -> None:
-    manager = _manager(hass, connection, msg)
-    if manager is None:
-        return
-    await _execute(
-        connection,
-        msg,
-        lambda: manager.async_delete_activator(msg[ATTR_ACTIVATOR_ID]),
-    )
-
-
-async def _created(awaitable: Awaitable[Any]) -> dict[str, Any]:
-    item = await awaitable
-    return {"id": item.id, "item": item.to_dict()}
-
-
-async def _updated(awaitable: Awaitable[Any]) -> dict[str, Any]:
-    item = await awaitable
-    return {"id": item.id, "item": item.to_dict()}
 
 
 @websocket_api.websocket_command(
@@ -522,13 +341,64 @@ async def ws_update_zone(
     )
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/profiles/export",
+    }
+)
+@websocket_api.async_response
+async def ws_export_profiles(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    import json
+    manager = _manager(hass, connection, msg)
+    if manager is None:
+        return
+    profiles = [p.to_dict() for p in manager.profiles.values()]
+    connection.send_result(msg["id"], {"profiles": profiles})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/profiles/import",
+        vol.Required("profiles"): list,
+        vol.Optional("mode", default="merge"): vol.In(["merge", "replace"]),
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_import_profiles(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    manager = _manager(hass, connection, msg)
+    if manager is None:
+        return
+
+    def _do_import():
+        mode = msg.get("mode", "merge")
+        if mode == "replace":
+            manager.profiles.clear()
+        for item in msg["profiles"]:
+            try:
+                profile = Profile.from_dict(item)
+                from .models import Profile
+                profile = Profile.from_dict(item)
+                manager.profiles[profile.id] = profile
+            except (TypeError, ValueError) as err:
+                raise ValueError(f"invalid_profile: {err}")
+        manager._save()
+        manager._notify()
+
+    await _execute(connection, msg, _do_import)
+
+
 COMMANDS = (
     ws_get_config,
     ws_set_profile,
-    ws_set_weekday_profile,
-    ws_clear_weekday_profile,
-    ws_set_profile_override,
-    ws_clear_profile_override,
     ws_start_bypass,
     ws_stop_bypass,
     ws_set_temperature,
@@ -537,15 +407,13 @@ COMMANDS = (
     ws_update_profile,
     ws_delete_profile,
     ws_clone_profile,
-    ws_create_activator,
-    ws_update_activator,
-    ws_delete_activator,
     ws_update_zone,
+    ws_export_profiles,
+    ws_import_profiles,
 )
 
 
 @callback
 def async_register_websocket(hass: HomeAssistant) -> None:
-    """Register all websocket commands."""
     for command in COMMANDS:
         websocket_api.async_register_command(hass, command)
