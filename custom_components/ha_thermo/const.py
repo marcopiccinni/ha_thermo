@@ -118,3 +118,9 @@ CARD_FILES: Final = [
     "www/ha-thermo-graph-card.js",
     "www/ha-thermo-common.js",
 ]
+
+# Time constants
+DAYS: Final = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+HOURS_IN_DAY: Final = 24
+MIN_TEMP: Final = 5
+MAX_TEMP: Final = 35
