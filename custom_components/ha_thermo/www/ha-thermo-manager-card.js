@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, DAY_KEYS, DAY_LABELS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.2.7";
+import { DOMAIN, EVENT_TYPES, DAY_KEYS, DAY_LABELS, esc, round, formatTemp, formatTime, formatRemaining, todayKey, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.2.8";
 
 const DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
 const HVAC_MODES = ["","off","heat","cool","heat_cool","auto","dry","fan_only"];

@@ -50,29 +50,85 @@ export const getZoneOptions = (zones, includeAll = false, allLabel = "Tutte le z
   return opts.join("");
 };
 
-export const renderChart = (zone, profile, data) => {
-  const low = Number(zone.min_temp ?? 5);
-  const high = Number(zone.max_temp ?? 35);
-  const pad = (high - low) * 0.15 || 5;
-  const minY = low - pad;
-  const maxY = high + pad;
-  const y = (t) => 160 - ((t - minY) / (maxY - minY)) * 140;
+export const renderChart = (zone, profile, data, opts = {}) => {
+  const showTarget = opts.show_target !== false;
+  const showCurrent = opts.show_current !== false;
+  const showGrid = opts.show_grid !== false;
   const day = todayKey();
-  const curve = profile?.curves?.[zone.id]?.[day];
-  if (!curve || curve.length !== 24) {
-    return `<svg class="curve" viewBox="0 0 207 180" preserveAspectRatio="none"><text x="103" y="90" text-anchor="middle" fill="var(--secondary-text-color)" font-size="0.8rem">Nessun dato per ${DAY_LABELS[day]}</text></svg>`;
+  const forecast = Array.isArray(zone.forecast) && zone.forecast.length === 24 ? zone.forecast : null;
+  const rawCurve = profile?.curves?.[zone.id]?.[day];
+  const curve = forecast
+    ? forecast.map(Number)
+    : Array.isArray(rawCurve) && rawCurve.length === 24
+      ? rawCurve.map(Number)
+      : null;
+  const target = zone.target_temperature ?? profile?.targets?.[zone.id] ?? zone.default_temp ?? 20;
+  const current = zone.current_temperature;
+
+  const W = 300, H = 170, left = 36, right = 10, top = 12, bottom = 22;
+  const plotW = W - left - right, plotH = H - top - bottom;
+
+  const series = [];
+  if (curve) series.push(...curve);
+  if (showTarget && target != null) series.push(Number(target));
+  if (showCurrent && current != null) series.push(Number(current));
+  if (!series.length) series.push(Number(zone.default_temp ?? 20));
+
+  let dmin = Math.min(...series), dmax = Math.max(...series);
+  const minSpan = 2;
+  if (dmax - dmin < minSpan) {
+    const mid = (dmin + dmax) / 2;
+    dmin = mid - minSpan / 2;
+    dmax = mid + minSpan / 2;
   }
-  const points = curve.map((t, h) => `${h * 9},${y(t).toFixed(2)}`).join(" ");
-  const targetY = y(zone.target_temperature ?? profile?.targets?.[zone.id] ?? zone.default_temp ?? 20).toFixed(2);
-  const currentY = zone.current_temperature == null ? null : y(zone.current_temperature).toFixed(2);
-  return `
-    <svg class="curve" viewBox="0 0 207 180" preserveAspectRatio="none">
-      <line x1="0" y1="${targetY}" x2="207" y2="${targetY}" stroke="var(--primary-color)" stroke-width="1.5" stroke-dasharray="4 3"/>
-      ${currentY ? `<line x1="0" y1="${currentY}" x2="207" y2="${currentY}" stroke="var(--secondary-text-color)" stroke-width="1" opacity="0.6"/>` : ""}
-      ${points ? `<polyline fill="none" stroke="var(--accent-color)" stroke-width="2" points="${points}"/>` : ""}
-      <text x="4" y="12" class="legend-target">Target ${formatTemp(zone.target_temperature)}</text>
-      ${currentY ? `<text x="4" y="26" class="legend-current">Attuale ${formatTemp(zone.current_temperature)}</text>` : ""}
-    </svg>`;
+  const pad = Math.max(0.3, (dmax - dmin) * 0.12);
+  dmin -= pad;
+  dmax += pad;
+
+  const x = (h) => left + (h / 23) * plotW;
+  const y = (t) => top + (1 - (t - dmin) / (dmax - dmin)) * plotH;
+  const fy = (t) => y(t).toFixed(1);
+
+  const gridTicks = [];
+  const ticks = 4;
+  for (let i = 0; i < ticks; i++) gridTicks.push(dmin + ((dmax - dmin) * i) / (ticks - 1));
+
+  const grid = showGrid
+    ? gridTicks
+        .map(
+          (t) =>
+            `<line x1="${left}" y1="${fy(t)}" x2="${W - right}" y2="${fy(t)}" stroke="var(--divider-color)" stroke-width="0.5" opacity="0.5"/>` +
+            `<text x="${left - 6}" y="${(y(t) + 3).toFixed(1)}" text-anchor="end" font-size="8" fill="var(--secondary-text-color)">${(Math.round(t * 10) / 10).toFixed(0)}°</text>`,
+        )
+        .join("")
+    : "";
+
+  const hourLabels = [0, 6, 12, 18, 23]
+    .map((h) => `<text x="${x(h).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="8" fill="var(--secondary-text-color)">${h}:00</text>`)
+    .join("");
+
+  const targetLine =
+    showTarget && target != null
+      ? `<line x1="${left}" y1="${fy(target)}" x2="${W - right}" y2="${fy(target)}" stroke="var(--primary-color)" stroke-width="1.5" stroke-dasharray="5 3"/>`
+      : "";
+  const currentLine =
+    showCurrent && current != null
+      ? `<line x1="${left}" y1="${fy(current)}" x2="${W - right}" y2="${fy(current)}" stroke="var(--secondary-text-color)" stroke-width="1" opacity="0.65"/>`
+      : "";
+
+  let curveLine = "";
+  let dots = "";
+  if (curve) {
+    const pts = curve.map((t, h) => `${x(h).toFixed(1)},${fy(t)}`).join(" ");
+    curveLine = `<polyline fill="none" stroke="var(--accent-color)" stroke-width="2" points="${pts}" stroke-linejoin="round"/>`;
+    dots = curve
+      .map((t, h) => `<circle cx="${x(h).toFixed(1)}" cy="${fy(t)}" r="1.6" fill="var(--accent-color)"/>`)
+      .join("");
+  } else {
+    curveLine = `<text x="${(left + (W - right)) / 2}" y="${top + plotH / 2}" text-anchor="middle" font-size="9" fill="var(--secondary-text-color)">Nessuna curva per ${DAY_LABELS[day]}</text>`;
+  }
+
+  return `<svg class="curve" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${grid}${hourLabels}${targetLine}${currentLine}${curveLine}${dots}</svg>`;
 };
 
 export const callWS = async (hass, msg) => {

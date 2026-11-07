@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, esc, formatTemp, formatTime, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.2.7";
+import { DOMAIN, EVENT_TYPES, esc, formatTemp, formatTime, todayKey, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.2.8";
 
 class HaThermoGraphCard extends HTMLElement {
   constructor() {
@@ -41,21 +41,14 @@ class HaThermoGraphCard extends HTMLElement {
   }
   _graph(zone) {
     const profile = this._profile(zone);
-    const low = Number(zone.min_temp ?? 5), high = Number(zone.max_temp ?? 35), pad = (high - low) * 0.15 || 5;
-    const minY = low - pad, maxY = high + pad;
-    const y = (t) => 160 - ((t - minY) / (maxY - minY)) * 140;
-    const day = todayKey();
-    const curve = profile?.curves?.[zone.id]?.[day] || [];
-    const points = curve.length === 24 ? curve.map((t, h) => `${h * 9},${y(t).toFixed(2)}`).join(" ") : "";
-    const targetY = y(zone.target_temperature ?? profile?.targets?.[zone.id] ?? zone.default_temp ?? 20).toFixed(2);
-    const currentY = zone.current_temperature == null ? null : y(zone.current_temperature).toFixed(2);
     const cfg = this._config;
+    const chart = renderChart(zone, profile, this._data, {
+      show_target: cfg.show_target !== false,
+      show_current: cfg.show_current !== false,
+      height: cfg.height || 180,
+    });
     return `<div class="chart-wrap">
-      <svg class="curve" viewBox="0 0 207 180" preserveAspectRatio="none">
-        ${cfg.show_target!==false ? `<line x1="0" y1="${targetY}" x2="207" y2="${targetY}" stroke="var(--primary-color)" stroke-width="1.5" stroke-dasharray="4 3"/>` : ""}
-        ${cfg.show_current!==false && currentY ? `<line x1="0" y1="${currentY}" x2="207" y2="${currentY}" stroke="var(--secondary-text-color)" stroke-width="1" opacity="0.6"/>` : ""}
-        ${points ? `<polyline fill="none" stroke="var(--accent-color)" stroke-width="2" points="${points}"/>` : ""}
-      </svg>
+      ${chart}
       ${cfg.show_legend!==false ? `<div class="legend">
         ${cfg.show_target!==false ? `<span><i style="display:inline-block;width:10px;height:2px;background:var(--primary-color);margin-right:4px"></i>Target ${formatTemp(zone.target_temperature)}</span>` : ""}
         ${cfg.show_current!==false && zone.current_temperature!=null ? `<span><i style="display:inline-block;width:10px;height:2px;background:var(--secondary-text-color);margin-right:4px"></i>Attuale ${formatTemp(zone.current_temperature)}</span>` : ""}

@@ -800,6 +800,53 @@ class ThermoManager:
             zone.default_temp,
         )
 
+    def _profile_for_moment(
+        self, zone_id: str, moment: datetime
+    ) -> Profile | None:
+        """Return the profile that would drive a zone at ``moment`` (no side effects)."""
+        pin = self.pinned_profiles.get(zone_id)
+        if pin and pin.get("profile_id") in self.profiles:
+            until = pin.get("until")
+            if not isinstance(until, datetime) or until > moment:
+                return self.profiles[pin["profile_id"]]
+        activator = pick_activator(
+            self.activators.values(),
+            zone_id,
+            moment,
+            self._condition_state,
+        )
+        if activator and activator.profile_id in self.profiles:
+            return self.profiles[activator.profile_id]
+        active = self.active_profiles.get(zone_id)
+        if active in self.profiles:
+            return self.profiles[active]
+        default = self._default_profile_id()
+        return self.profiles.get(default) if default else None
+
+    def target_forecast(self, zone: Zone, now: datetime | None = None) -> list[float]:
+        """Return the effective target for each hour of today (0-23)."""
+        now = now or dt_util.now()
+        if not self.enabled or zone.id in self.disabled_zones:
+            current = self._climate_target(zone)
+            return [current if current is not None else zone.default_temp] * 24
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        out: list[float] = []
+        for hour in range(24):
+            moment = start + timedelta(hours=hour)
+            profile = self._profile_for_moment(zone.id, moment)
+            if profile is not None:
+                out.append(
+                    round(
+                        resolve_target(profile, zone, moment, zone.default_temp), 2
+                    )
+                )
+            else:
+                climate = self._climate_target(zone)
+                out.append(
+                    climate if climate is not None else zone.default_temp
+                )
+        return out
+
     def _zone_snapshot(self, zone: Zone) -> dict[str, Any]:
         return {
             "id": zone.id,
@@ -819,6 +866,7 @@ class ThermoManager:
             "override_active": self.is_override_active(zone.id),
             "enabled": self.is_zone_enabled(zone.id),
             "next_change": _iso(self.next_change_for(zone.id)),
+            "forecast": self.target_forecast(zone),
             "entity_ids": {
                 key: self._entity_id(domain, zone.id, key)
                 for key, domain in _ENTITY_DOMAINS.items()

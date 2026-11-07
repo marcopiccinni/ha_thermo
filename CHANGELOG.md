@@ -69,3 +69,9 @@ Prima versione.
 ## 0.2.7
 
 - Fix: clona profilo inviava campi errati (`new_id`/`new_name` invece di `source_id`/`name`) causando errore "not a valid option".
+
+## 0.2.8
+
+- Grafico: scala verticale adattiva ai dati (le oscillazioni ora sono visibili).
+- Grafico: nuova linea "programma" calcolata dal backend per tutte le 24 ore (attivatori + curve), con griglia e ore.
+- Grafico: punti orari e fallback quando manca una curva.
