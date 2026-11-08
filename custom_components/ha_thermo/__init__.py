@@ -144,15 +144,8 @@ async def _async_register_cards(hass: HomeAssistant) -> None:
     except (RuntimeError, ValueError):
         pass
 
-    lovelace_data = getattr(hass.data.get(LOVELACE_DATA), "resource_mode", None) if LOVELACE_DATA in hass.data else None
-    if lovelace_data == MODE_STORAGE:
-        await _async_register_lovelace_resources(hass, urls)
-    else:
-        for url in urls:
-            try:
-                add_extra_js_url(hass, url)
-            except (KeyError, RuntimeError):
-                _LOGGER.debug("Frontend not ready for %s", url)
+    # Register resources in any mode
+    await _async_register_lovelace_resources(hass, urls)
 
 
 async def _async_register_lovelace_resources(hass: HomeAssistant, urls: list[str]) -> None:
