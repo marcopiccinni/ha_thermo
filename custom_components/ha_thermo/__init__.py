@@ -46,7 +46,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await manager.async_setup()
     hass.data[DOMAIN]["manager"] = manager
     
-    coordinator = ThermoCoordinator(hass, manager)
+    coordinator = ThermoCoordinator(hass, manager, int(manager.settings.get("scan_interval", 30)))
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN]["coordinator"] = coordinator
     
