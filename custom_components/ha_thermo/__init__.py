@@ -1,4 +1,4 @@
-"""The HA Thermo integration."""
+"""HA Thermo integration - Simplified version 0.3.2."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     ASSET_FILES,
@@ -27,183 +27,122 @@ from .websocket_api import async_register_websocket
 
 _LOGGER = logging.getLogger(__name__)
 
-CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-
-PLATFORMS: list[Platform] = [
-    Platform.SENSOR,
-    Platform.BINARY_SENSOR,
-    Platform.SELECT,
-    Platform.SWITCH,
-]
-
-type ConfigEntry = ConfigEntry[ThermoManager]
+CONFIG_SCHEMA = lambda config: {DOMAIN: {}}
 
 _WWW = Path(__file__).parent / "www"
 
 
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Register cards, services and the websocket API once."""
-    await _async_register_cards(hass)
-    async_register_services(hass)
-    async_register_websocket(hass)
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up HA Thermo from yaml configuration."""
+    hass.data.setdefault(DOMAIN, {})
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up HA Thermo from a config entry."""
-    options = dict(entry.options)
-    zones = zones_from_options(options)
-    if not zones:
-        zones = [
-            Zone.from_dict(item)
-            for item in entry.data.get(CONF_ZONES, [])
-            if isinstance(item, dict)
-        ]
-
-    manager = ThermoManager(hass, entry, zones, options)
-    coordinator = ThermoCoordinator(
-        hass, manager, int(manager.settings["scan_interval"])
-    )
-    manager.coordinator = coordinator
-    await manager.async_initialize()
-    await coordinator.async_config_entry_first_refresh()
-
-    hass.data[DOMAIN]["manager"] = manager
     hass.data.setdefault(DOMAIN, {})
+    
+    manager = ThermoManager(hass, entry)
+    await manager.async_setup()
     hass.data[DOMAIN]["manager"] = manager
-    hass.data[DOMAIN]["entry_id"] = entry.entry_id
-
-    dr.async_get(hass).async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, entry.entry_id)},
-        name=entry.title,
-        manufacturer="marcopiccinni",
-        model="HA Thermo",
-        sw_version=VERSION,
-    )
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    
+    coordinator = ThermoCoordinator(hass, manager)
+    await coordinator.async_config_entry_first_refresh()
+    hass.data[DOMAIN]["coordinator"] = coordinator
+    
+    await hass.config_entries.async_forward_entry_setups(entry, [
+        Platform.SENSOR,
+        Platform.BINARY_SENSOR,
+        Platform.SELECT,
+        Platform.SWITCH,
+    ])
+    
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
+    
+    async_register_services(hass)
+    async_register_websocket(hass)
+    
+    # Register cards AFTER platforms are loaded
+    await hass.async_add_executor_job(_register_static_paths, hass)
+    await _register_lovelace_resources(hass)
+    
     return True
 
 
-async def async_unload_entry(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> bool:
-    """Unload the integration and flush its state."""
-    unloaded = await hass.config_entries.async_unload_platforms(
-        entry, PLATFORMS
-    )
-    if unloaded:
-        manager: ThermoManager | None = entry
-        if manager is not None:
-            pass
-        data = hass.data.get(DOMAIN, {})
-        if data.get("entry_id") == entry.entry_id:
-            data.pop("manager", None)
-            data.pop("entry_id", None)
-    return unloaded
-
-
-async def _async_update_listener(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
-    """Reload the entry when its options change."""
-    await hass.config_entries.async_reload(entry.entry_id)
-
-
-async def _async_register_cards(hass: HomeAssistant) -> None:
-    """Serve and load the bundled Lovelace cards, if possible."""
-    try:
-        from homeassistant.components.frontend import add_extra_js_url
-        from homeassistant.components.http import StaticPathConfig
-        from homeassistant.components.lovelace import LOVELACE_DATA, MODE_STORAGE
-    except ImportError:
-        return
-
+def _register_static_paths(hass: HomeAssistant) -> None:
+    """Register static paths for card files."""
     http = getattr(hass, "http", None)
     if http is None or not _WWW.is_dir():
         return
 
     all_files = list(ASSET_FILES) + list(CARD_FILES)
-    paths = []
-    urls = []
     for name in all_files:
         file_path = _WWW / name
         if not file_path.is_file():
             continue
         url = f"/{DOMAIN}/{name}"
-        paths.append(StaticPathConfig(url, str(file_path), False))
-        urls.append(f"{url}?v={VERSION}")
-
-    if not paths:
-        return
-
-    try:
-        await http.async_register_static_paths(paths)
-    except (RuntimeError, ValueError):
-        pass
-
-    lovelace_data = getattr(hass.data.get(LOVELACE_DATA), "resource_mode", None) if LOVELACE_DATA in hass.data else None
-    if lovelace_data == MODE_STORAGE:
-        await _async_register_lovelace_resources(hass, urls)
-    else:
-        for url in urls:
-            try:
-                add_extra_js_url(hass, url)
-            except (KeyError, RuntimeError):
-                _LOGGER.debug("Frontend not ready for %s", url)
-
-
-async def _async_register_lovelace_resources(hass: HomeAssistant, urls: list[str]) -> None:
-    """Register card modules as persistent Lovelace resources (storage mode)."""
-    try:
-        from homeassistant.components.lovelace import LOVELACE_DATA
-        from homeassistant.components.lovelace.resources import (
-            ResourceStorageCollection,
-        )
-    except ImportError:
-        return
-
-    ll_data = hass.data.get(LOVELACE_DATA)
-    if not ll_data or not isinstance(ll_data.resources, ResourceStorageCollection):
-        return
-
-    resources = ll_data.resources
-    try:
-        await resources.async_get_info()
-    except Exception:  # noqa: BLE001, S110
-        pass
-
-    existing = resources.async_items() or []
-    base_to_existing = {}
-    for res in existing:
-        url = res.get("url", "")
-        base = url.partition("?")[0]
-        if base.startswith(f"/{DOMAIN}/"):
-            base_to_existing[base] = res
-
-    for url in urls:
-        base = url.partition("?")[0]
-        if base in base_to_existing:
-            res = base_to_existing[base]
-            if res.get("url") != url:
-                try:
-                    await resources.async_update_item(res["id"], {"res_type": "module", "url": url})
-                except Exception:  # noqa: BLE001, S110
-                    pass
-            base_to_existing.pop(base)
-        else:
-            try:
-                await resources.async_create_item({"res_type": "module", "url": url})
-            except Exception:  # noqa: BLE001, S110
-                pass
-
-    for res in base_to_existing.values():
         try:
-            await resources.async_delete_item(res["id"])
-        except Exception:  # noqa: BLE001, S110
-            pass
+            http.register_static_path(url, str(file_path), False)
+            _LOGGER.debug("Registered static path: %s", url)
+        except Exception as err:
+            _LOGGER.warning("Could not register static path %s: %s", url, err)
 
 
-__all__ = ["CONF_NAME", "DOMAIN", "async_setup_entry"]
+async def _register_lovelace_resources(hass: HomeAssistant) -> None:
+    """Register card modules as Lovelace resources."""
+    try:
+        from homeassistant.components.lovelace import DOMAIN as LL_DOMAIN
+        
+        ll_resources = hass.data.get(LL_DOMAIN, {}).get("resources")
+        if not ll_resources or not hasattr(ll_resources, "async_items"):
+            _LOGGER.debug("Lovelace resources not available")
+            return
+        
+        # Get existing resources
+        try:
+            existing = ll_resources.async_items() or []
+        except Exception:
+            existing = []
+        
+        existing_urls = {r.get("url", "").split("?")[0] for r in existing}
+        
+        # Register card files
+        for name in CARD_FILES:
+            url = f"/{DOMAIN}/{name}?v={VERSION}"
+            url_base = url.split("?")[0]
+            
+            if url_base in existing_urls:
+                _LOGGER.debug("Resource already exists: %s", url_base)
+                continue
+            
+            try:
+                await ll_resources.async_create_item({
+                    "res_type": "module",
+                    "url": url,
+                })
+                _LOGGER.info("✓ Registered Lovelace resource: %s", url)
+            except Exception as err:
+                _LOGGER.warning("Could not register resource %s: %s", url, err)
+                
+    except ImportError as err:
+        _LOGGER.debug("Could not import Lovelace components: %s", err)
+    except Exception as err:
+        _LOGGER.warning("Error registering Lovelace resources: %s", err)
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, [
+        Platform.SENSOR,
+        Platform.BINARY_SENSOR,
+        Platform.SELECT,
+        Platform.SWITCH,
+    ])
+    if unload_ok:
+        hass.data.pop(DOMAIN, None)
+    return unload_ok
+
+
+async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Update options."""
+    await hass.config_entries.async_reload(entry)
