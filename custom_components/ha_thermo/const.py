@@ -141,3 +141,28 @@ CONF_SCAN_INTERVAL: Final = "scan_interval"
 # Storage
 STORAGE_KEY: Final = "ha_thermo.state"
 STORAGE_VERSION: Final = 1
+
+# Config flow constants
+CONF_CLIMATE_ENTITIES: Final = "climate_entities"
+CONF_CLIMATE_ENTITY: Final = "climate_entity"
+CONF_DEFAULT_TEMP: Final = "default_temp"
+CONF_TEMPERATURE_SENSOR: Final = "temperature_sensor"
+CONF_ZONE_ID: Final = "zone_id"
+CONF_ZONE_NAME: Final = "zone_name"
+CONF_SUMMER_TEMP: Final = "summer_temp"
+
+# Config flow defaults
+DEFAULT_AWAY_TEMP: Final = 17.0
+DEFAULT_COMFORT_TEMP: Final = 20.0
+DEFAULT_ECO_TEMP: Final = 19.0
+DEFAULT_NIGHT_TEMP: Final = 18.0
+DEFAULT_SUMMER_TEMP: Final = 26.0
+MIN_TEMP: Final = 5.0
+MAX_TEMP: Final = 35.0
+TEMP_STEP: Final = 0.5
+MIN_SCAN_INTERVAL: Final = 10
+MAX_SCAN_INTERVAL: Final = 300
+MIN_REASSERT_INTERVAL: Final = 30
+MAX_REASSERT_INTERVAL: Final = 240
+MIN_MANUAL_HOLD: Final = 0
+MAX_MANUAL_HOLD: Final = 120
