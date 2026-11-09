@@ -7,7 +7,7 @@ from typing import Final
 DOMAIN: Final = "ha_thermo"
 STORAGE_KEY: Final = "ha_thermo.state"
 STORAGE_VERSION: Final = 1
-VERSION: Final = "0.3.0"
+VERSION: Final = "0.3.1"
 
 # Configuration
 CONF_ZONES: Final = "zones"
