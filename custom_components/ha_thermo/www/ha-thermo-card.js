@@ -5,18 +5,13 @@ import {
   DAY_LABELS,
   esc,
   formatTemp,
-  formatRemaining,
   findZone,
   getZoneOptions,
   profileOptions,
   renderChart,
   callWS,
-  newProfileDraft,
-  uniformProfileHourly,
-  profileAverageTemp,
-  slugProfileId,
   todayKey,
-} from "./ha-thermo-common.js?v=0.3.5";
+} from "./ha-thermo-common.js?v=0.3.6";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -24,7 +19,6 @@ class HaThermoCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
     this.shadowRoot.addEventListener("change", (e) => this._onChange(e));
-    this.shadowRoot.addEventListener("input", (e) => this._onInput(e));
     this._config = {};
     this._data = null;
     this._error = null;
@@ -32,9 +26,6 @@ class HaThermoCard extends HTMLElement {
     this._unsubs = [];
     this._timer = null;
     this._started = false;
-    this._editingProfile = null;
-    this._profileDraft = null;
-    this._profilesOpen = false;
   }
 
   static getStubConfig(hass, entities) {
@@ -49,15 +40,11 @@ class HaThermoCard extends HTMLElement {
   setConfig(config) {
     if (!config) throw new Error("Configurazione non valida");
     this._config = {
-      title: "Termostati",
+      title: "Termostato",
       show_graph: true,
       show_slider: true,
       show_weekly: true,
-      show_profiles_manager: true,
-      show_bypass: true,
-      show_enable: true,
       show_status: true,
-      bypass_minutes: 60,
       ...config,
     };
     this._render();
@@ -98,7 +85,7 @@ class HaThermoCard extends HTMLElement {
   }
 
   getCardSize() {
-    return this._profilesOpen || this._editingProfile ? 12 : 7;
+    return 5;
   }
 
   async _subscribe() {
@@ -125,29 +112,13 @@ class HaThermoCard extends HTMLElement {
     if (!this._hass) return Promise.resolve();
     return this._hass
       .callWS(msg)
-      .then((res) => {
+      .then(() => {
         if (okText) this._toast(okText);
-        if (res?.affected_zones?.length) {
-          this._toast(`Profilo rimosso: giorni/zone aggiornati → ${res.fallback_profile}`, false);
-        }
         return this._load();
       })
       .catch((e) => {
-        this._toast(this._friendlyError(e), true);
-        throw e;
+        this._toast(e?.message || String(e), true);
       });
-  }
-
-  _friendlyError(err) {
-    const code = err?.message || String(err);
-    const map = {
-      profile_default_protected: "I profili predefiniti non si possono eliminare",
-      profile_last_one: "Deve restare almeno un profilo",
-      unknown_profile: "Profilo sconosciuto",
-      profile_exists: "Esiste già un profilo con questo id",
-      schedule_empty: "Seleziona almeno un giorno",
-    };
-    return map[code] || code;
   }
 
   _toast(txt, err = false) {
@@ -156,7 +127,7 @@ class HaThermoCard extends HTMLElement {
     el.textContent = txt;
     el.classList.toggle("error", err);
     el.classList.add("show");
-    setTimeout(() => el.classList.remove("show"), 3500);
+    setTimeout(() => el.classList.remove("show"), 3000);
   }
 
   _zone() {
@@ -168,97 +139,46 @@ class HaThermoCard extends HTMLElement {
     return (this._data?.profiles || []).find((p) => p.id === id);
   }
 
-  _profileInUse(profileId) {
-    const weekly = this._data?.weekly_profiles || {};
-    return Object.values(weekly).some((sched) => sched && Object.values(sched).includes(profileId));
-  }
-
   _weeklyBlock(zone, profiles, disabled) {
-    if (!this._config.show_weekly || !zone || zone.pinned) return "";
+    if (this._config.show_weekly === false || !zone || zone.pinned) return "";
     const schedule = this._data?.weekly_profiles?.[zone.id] || {};
     const rows = WEEK_DAYS.map((day) => {
       const value = schedule[day] || "";
       return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-action="weekly" data-day="${day}" data-zone="${esc(zone.id)}" ${disabled ? "disabled" : ""}>${profileOptions(profiles, value)}</select></label>`;
     }).join("");
-    return `<details class="weekly" open><summary>Pianificazione settimanale (profili condivisi)</summary><p class="hint">Ogni giorno usa la curva 24h del profilo scelto. Valido in modalità automatica.</p><div class="weekly-grid">${rows}</div></details>`;
-  }
-
-  _hourlyEditorInputs(draft) {
-    const hourly = Array.isArray(draft?.hourly) ? draft.hourly : Array(24).fill(20);
-    return Array.from({ length: 24 }, (_, h) => {
-      const v = hourly[h] ?? 20;
-      return `<label class="hour-cell"><span>${String(h).padStart(2, "0")}</span><input type="number" step="0.5" data-hour="${h}" value="${esc(v)}"></label>`;
-    }).join("");
-  }
-
-  _profileManagerBlock(profiles) {
-    if (this._config.show_profiles_manager === false) return "";
-    const rows = profiles
-      .map((p) => {
-        const inUse = this._profileInUse(p.id);
-        return `<div class="profile-row">
-          <span class="profile-name">${esc(p.name)} <span class="muted">(~${profileAverageTemp(p)}°)</span>${inUse ? ' <span class="tag">in uso</span>' : ""}</span>
-          <div class="profile-actions">
-            <button type="button" data-action="profile-edit" data-id="${esc(p.id)}">Modifica</button>
-            <button type="button" data-action="profile-clone" data-id="${esc(p.id)}" data-name="${esc(p.name)}">Duplica</button>
-            <button type="button" data-action="profile-delete" data-id="${esc(p.id)}" data-name="${esc(p.name)}">Elimina</button>
-          </div>
-        </div>`;
-      })
-      .join("");
-    const draft = this._profileDraft || {};
-    const editor =
-      this._editingProfile != null
-        ? `<div class="editor">
-      <div class="editor-title">${this._editingProfile === "__new__" ? "Nuovo profilo" : `Modifica: ${esc(draft.name || "")}`}</div>
-      <label>Nome<input type="text" data-field="p-name" value="${esc(draft.name || "")}"></label>
-      <label>Uniforma (°C)<input type="number" step="0.5" data-field="p-uniform" placeholder="es. 20"></label>
-      <div class="hourly-grid">${this._hourlyEditorInputs(draft)}</div>
-      <p class="hint">Curva oraria unica (00–23), condivisa da tutti i termostati.</p>
-      <div class="editor-actions">
-        <button type="button" data-action="profile-save">Salva</button>
-        <button type="button" data-action="profile-cancel">Annulla</button>
-      </div>
-    </div>`
-        : "";
-    return `<details class="profiles" ${this._profilesOpen ? "open" : ""}>
-      <summary>Gestione profili condivisi</summary>
-      <button type="button" class="secondary" data-action="profile-new">+ Nuovo profilo</button>
-      <div class="profile-list">${rows}</div>
-      ${editor}
-    </details>`;
+    return `<details class="weekly" open><summary>Settimana (profili condivisi)</summary><p class="hint">Gestisci le curve in Impostazioni → HA Thermo → Configura → Profili.</p><div class="weekly-grid">${rows}</div></details>`;
   }
 
   _render() {
     if (!this.shadowRoot) return;
     const zone = this._zone();
     const cfg = this._config;
-    const disabled = !this._data || !zone || !zone.enabled;
-    const profiles = this._data?.profiles || [];
+    const disabled = !this._data || !zone;
     const manual = Boolean(zone?.pinned);
+    const profiles = this._data?.profiles || [];
     const today = todayKey();
-    const todayProfile =
-      zone && (this._data?.weekly_profiles?.[zone.id]?.[today] || zone.active_profile);
+    const todayProfile = zone && (this._data?.weekly_profiles?.[zone.id]?.[today] || zone.active_profile);
     const todayName = profiles.find((p) => p.id === todayProfile)?.name || zone?.active_profile_name;
+
     const body = !this._data
       ? `<div class="empty">${this._error ? esc(this._error) : "Caricamento…"}</div>`
       : !zone
-        ? `<div class="empty">Scegli il termostato con la matita</div>`
+        ? `<div class="empty">Scegli il termostato (matita)</div>`
         : `
       <div class="head">
         <div>
-          <div class="title">${esc(cfg.title || zone.name || "Termostato")}</div>
-          <div class="mode">${manual ? "Manuale" : "Automatico"} · Oggi (${DAY_LABELS[today] || today}): ${esc(todayName || "--")}</div>
+          <div class="title">${esc(cfg.title || zone.name)}</div>
+          <div class="sub">${manual ? "Manuale" : "Automatico"} · Oggi: ${esc(todayName || "--")}</div>
         </div>
-        <button type="button" class="icon-btn" data-action="settings" title="Impostazioni">⚙️</button>
+        <button type="button" class="icon-btn" data-action="settings" title="Termostato HA">⚙️</button>
       </div>
-      ${cfg.show_graph !== false ? renderChart(zone, this._activeProfile(zone), this._data, { show_target: true, show_current: true, height: 180 }) : ""}
+      ${cfg.show_graph !== false ? renderChart(zone, this._activeProfile(zone), this._data) : ""}
       <div class="controls">
         <div class="mode-row">
-          <button type="button" class="toggle ${manual ? "" : "active"}" data-action="mode-auto" ${disabled ? "disabled" : ""}>Automatico</button>
-          <button type="button" class="toggle ${manual ? "active" : ""}" data-action="mode-manual" ${disabled ? "disabled" : ""}>Manuale</button>
+          <button type="button" class="toggle ${manual ? "" : "active"}" data-action="mode-auto">Automatico</button>
+          <button type="button" class="toggle ${manual ? "active" : ""}" data-action="mode-manual">Manuale</button>
         </div>
-        ${cfg.show_slider ? `
+        ${cfg.show_slider !== false ? `
         <div class="slider-row">
           <button type="button" data-action="down" ${disabled ? "disabled" : ""}>−</button>
           <input type="range" min="${zone.min_temp}" max="${zone.max_temp}" step="0.5" value="${zone.target_temperature || 20}" data-action="slider" ${disabled ? "disabled" : ""}>
@@ -267,62 +187,35 @@ class HaThermoCard extends HTMLElement {
         <div class="temp-display">${formatTemp(zone.current_temperature)} <span class="target">→ ${formatTemp(zone.target_temperature)}</span></div>
         ` : ""}
         ${this._weeklyBlock(zone, profiles, disabled)}
-        ${cfg.show_bypass ? `
-        <div class="bypass-row">
-          <button type="button" data-action="bypass" data-zone="${esc(zone.id)}" ${disabled ? "disabled" : ""}>Bypass ${cfg.bypass_minutes}m</button>
-          ${zone.bypass_active ? `<button type="button" class="danger" data-action="stop-bypass" data-zone="${esc(zone.id)}">Ferma</button>` : ""}
-        </div>
-        ` : ""}
-        ${cfg.show_enable ? `<button type="button" class="toggle ${zone.enabled ? "active" : ""}" data-action="enable" data-zone="${esc(zone.id)}">${zone.enabled ? "Disattiva controllo" : "Attiva controllo"}</button>` : ""}
-        ${this._profileManagerBlock(profiles)}
       </div>
-      ${cfg.show_status !== false ? `<div class="meta"><span>Profilo attivo: ${esc(zone.active_profile_name || "--")}</span>${zone.bypass_active ? `<span>Bypass: ${formatRemaining(zone.bypass_remaining)}</span>` : ""}</div>` : ""}
-    `;
+      ${cfg.show_status !== false ? `<div class="meta">Profilo attivo: ${esc(zone.active_profile_name || "--")}</div>` : ""}`;
+
     this.shadowRoot.innerHTML = `<style>
       :host{display:block}
-      .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:var(--ha-card-border-radius,12px);border:var(--ha-card-border-width,1px) solid var(--ha-card-border-color,var(--divider-color,transparent));box-shadow:var(--ha-card-box-shadow,none);padding:16px}
-      .head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;gap:8px}
-      .title{font-weight:600;font-size:1.05rem}
-      .mode{font-size:0.8rem;color:var(--secondary-text-color);margin-top:2px}
-      .controls{display:grid;gap:8px;margin:12px 0}
-      .mode-row{display:flex;gap:8px}
-      .slider-row{display:flex;align-items:center;gap:8px}
-      .slider-row button{width:36px;height:36px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color,#fff);font-size:1.2rem;cursor:pointer}
-      .weekly{margin-top:4px;border-top:1px solid var(--divider-color);padding-top:8px}
-      .weekly summary,.profiles summary{cursor:pointer;font-weight:500}
-      .weekly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:8px}
-      .weekly-day{display:grid;gap:4px;font-size:0.8rem}
-      .weekly-day select,.profiles select,.editor select{font-size:0.85rem;padding:6px;border-radius:6px;border:1px solid var(--divider-color)}
-      .profile-list{display:grid;gap:6px;margin:8px 0}
-      .profile-row{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:0.85rem;border:1px solid var(--divider-color);border-radius:8px;padding:6px 8px;flex-wrap:wrap}
-      .profile-actions{display:flex;gap:4px;flex-wrap:wrap}
-      .profile-actions button{width:auto;padding:4px 8px;font-size:0.75rem;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color,#fff);cursor:pointer}
-      button.secondary{width:100%;padding:8px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer;margin-top:6px}
-      .tag{font-size:0.7rem;color:var(--primary-color)}
-      .muted{font-size:0.75rem;color:var(--secondary-text-color)}
-      .hint{font-size:0.75rem;color:var(--secondary-text-color);margin:6px 0}
-      .editor{margin-top:10px;padding:10px;border:1px dashed var(--divider-color);border-radius:8px;display:grid;gap:8px}
-      .editor-title{font-weight:600}
-      .editor label{display:grid;gap:4px;font-size:0.85rem}
-      .editor input{padding:6px;border-radius:6px;border:1px solid var(--divider-color)}
-      .hourly-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
-      .hour-cell{display:grid;gap:2px;font-size:0.65rem;text-align:center}
-      .hour-cell input{width:100%;padding:2px;font-size:0.7rem}
-      .editor-actions{display:flex;gap:8px}
-      .editor-actions button{flex:1;padding:8px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer}
-      select,button.toggle{width:100%;padding:8px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color,#fff);font-size:1rem;cursor:pointer}
-      button.toggle.active{background:var(--primary-color);color:var(--text-primary-color,#fff);border-color:var(--primary-color)}
-      .bypass-row{display:flex;gap:8px}
-      .bypass-row button{flex:1;padding:8px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer}
-      .bypass-row button.danger{background:var(--error-color,#f44336);color:#fff;border:none}
+      .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:12px;border:1px solid var(--divider-color);padding:16px}
+      .head{display:flex;justify-content:space-between;gap:8px}
+      .title{font-weight:600}
+      .sub{font-size:0.8rem;color:var(--secondary-text-color)}
       .icon-btn{background:none;border:none;font-size:1.2rem;cursor:pointer}
-      .temp-display{text-align:center;font-size:1.5rem;margin:8px 0}.target{font-size:1rem;color:var(--secondary-text-color)}
-      .meta{display:flex;gap:12px;font-size:0.8rem;color:var(--secondary-text-color);margin-top:8px;flex-wrap:wrap}
-      .empty{color:var(--secondary-text-color);padding:12px 0;text-align:center}
-      .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#fff;padding:8px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .3s;z-index:10;max-width:90vw}.toast.show{opacity:1}.toast.error{background:rgba(244,67,54,0.92)}
+      .controls{display:grid;gap:8px;margin-top:8px}
+      .mode-row{display:flex;gap:8px}
+      .toggle{flex:1;padding:8px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer;background:var(--card-background-color,#fff)}
+      .toggle.active{background:var(--primary-color);color:#fff;border-color:var(--primary-color)}
+      .slider-row{display:flex;align-items:center;gap:8px}
+      .slider-row button{width:36px;height:36px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer}
+      .slider-row input{flex:1}
+      .temp-display{text-align:center;font-size:1.4rem;margin:4px 0}
+      .target{font-size:0.95rem;color:var(--secondary-text-color)}
+      .weekly{margin-top:4px;border-top:1px solid var(--divider-color);padding-top:8px}
+      .weekly summary{cursor:pointer;font-weight:500}
+      .hint{font-size:0.75rem;color:var(--secondary-text-color);margin:4px 0}
+      .weekly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px;margin-top:6px}
+      .weekly-day{display:grid;gap:2px;font-size:0.8rem}
+      .weekly-day select{padding:4px;border-radius:6px;border:1px solid var(--divider-color)}
+      .meta{font-size:0.8rem;color:var(--secondary-text-color);margin-top:8px}
+      .empty{text-align:center;color:var(--secondary-text-color);padding:16px}
+      .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 14px;border-radius:8px;opacity:0;pointer-events:none;z-index:5}.toast.show{opacity:1}.toast.error{background:#c62828}
     </style><div class="card">${body}<div id="toast" class="toast"></div></div>`;
-    const details = this.shadowRoot.querySelector("details.profiles");
-    if (details) details.addEventListener("toggle", () => (this._profilesOpen = details.open));
   }
 
   _onClick(e) {
@@ -330,105 +223,32 @@ class HaThermoCard extends HTMLElement {
     if (!btn) return;
     const zone = this._zone();
     const action = btn.dataset.action;
-    if (action === "settings") {
-      this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: zone?.climate_entity }, bubbles: true, composed: true }));
+    if (action === "settings" && zone) {
+      this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: zone.climate_entity }, bubbles: true, composed: true }));
       return;
     }
     if (action === "up" || action === "down") {
       const slider = this.shadowRoot.querySelector("input[type=range]");
       if (!slider) return;
       const step = parseFloat(slider.step || "0.5");
-      let val = parseFloat(slider.value);
-      val += action === "up" ? step : -step;
+      let val = parseFloat(slider.value) + (action === "up" ? step : -step);
       slider.value = val;
       slider.dispatchEvent(new Event("change", { bubbles: true }));
       return;
     }
-    if (action === "mode-auto") {
-      if (!zone) return;
-      this._call({ type: `${DOMAIN}/set_profile`, profile: "__auto__", zones: [zone.id] }, "Modalità automatica");
+    if (action === "mode-auto" && zone) {
+      this._call({ type: `${DOMAIN}/set_profile`, profile: "__auto__", zones: [zone.id] }, "Automatico");
       return;
     }
-    if (action === "mode-manual") {
-      if (!zone) return;
+    if (action === "mode-manual" && zone) {
       const schedule = this._data?.weekly_profiles?.[zone.id] || {};
       const pid = schedule[todayKey()] || zone.active_profile;
       if (!pid) {
         this._toast("Imposta prima la pianificazione settimanale", true);
         return;
       }
-      this._call({ type: `${DOMAIN}/set_profile`, profile: pid, zones: [zone.id] }, "Modalità manuale");
-      return;
+      this._call({ type: `${DOMAIN}/set_profile`, profile: pid, zones: [zone.id] }, "Manuale");
     }
-    if (action === "bypass") {
-      this._call({ type: `${DOMAIN}/bypass/start`, zones: [btn.dataset.zone], duration: this._config.bypass_minutes }, "Bypass avviato");
-      return;
-    }
-    if (action === "stop-bypass") {
-      this._call({ type: `${DOMAIN}/bypass/stop`, zones: [btn.dataset.zone] }, "Bypass fermato");
-      return;
-    }
-    if (action === "enable" && zone) {
-      this._call({ type: `${DOMAIN}/set_enabled`, enabled: !zone.enabled, zones: [zone.id] }, "Stato aggiornato");
-      return;
-    }
-    if (action === "profile-new") {
-      this._profilesOpen = true;
-      this._editingProfile = "__new__";
-      this._profileDraft = newProfileDraft("Nuovo profilo", zone?.default_temp ?? 20);
-      this._render();
-      return;
-    }
-    if (action === "profile-edit") {
-      const profile = (this._data?.profiles || []).find((p) => p.id === btn.dataset.id);
-      if (!profile) return;
-      this._profilesOpen = true;
-      this._editingProfile = profile.id;
-      this._profileDraft = JSON.parse(JSON.stringify(profile));
-      this._render();
-      return;
-    }
-    if (action === "profile-clone") {
-      this._call({ type: `${DOMAIN}/profile/clone`, source_id: btn.dataset.id, name: `${btn.dataset.name || "Profilo"} (copia)` }, "Profilo duplicato");
-      return;
-    }
-    if (action === "profile-delete") {
-      if (!window.confirm(`Eliminare "${btn.dataset.name}"? I giorni che lo usano passeranno a Comfort.`)) return;
-      this._call({ type: `${DOMAIN}/profile/delete`, profile_id: btn.dataset.id });
-      return;
-    }
-    if (action === "profile-cancel") {
-      this._editingProfile = null;
-      this._profileDraft = null;
-      this._render();
-      return;
-    }
-    if (action === "profile-save") {
-      this._saveProfileDraft();
-    }
-  }
-
-  _saveProfileDraft() {
-    const nameInput = this.shadowRoot.querySelector('[data-field="p-name"]');
-    const uniformInput = this.shadowRoot.querySelector('[data-field="p-uniform"]');
-    const name = (nameInput?.value || "").trim() || "Profilo";
-    let draft = JSON.parse(JSON.stringify(this._profileDraft || newProfileDraft(name)));
-    draft.name = name;
-    if (this._editingProfile === "__new__") draft.id = slugProfileId(name);
-    if (uniformInput?.value) draft = uniformProfileHourly(draft, Number(uniformInput.value));
-    const hourly = Array.from({ length: 24 }, (_, h) => {
-      const input = this.shadowRoot.querySelector(`[data-hour="${h}"]`);
-      return input ? Number(input.value) : Number(draft.hourly?.[h] ?? 20);
-    });
-    draft.hourly = hourly;
-    const msg =
-      this._editingProfile === "__new__"
-        ? { type: `${DOMAIN}/profile/create`, profile: draft }
-        : { type: `${DOMAIN}/profile/update`, profile: draft };
-    this._call(msg, this._editingProfile === "__new__" ? "Profilo creato" : "Profilo aggiornato").then(() => {
-      this._editingProfile = null;
-      this._profileDraft = null;
-    });
   }
 
   _onChange(e) {
@@ -437,25 +257,19 @@ class HaThermoCard extends HTMLElement {
       const zone = this._zone();
       if (!zone) return;
       this._call(
-        {
-          type: `${DOMAIN}/bypass/start`,
-          zones: [zone.id],
-          temperature: parseFloat(t.value),
-          duration: this._config.bypass_minutes,
-        },
+        { type: `${DOMAIN}/set_temperature`, zones: [zone.id], temperature: parseFloat(t.value) },
         "Temperatura impostata",
       );
       return;
     }
     if (t.matches("select[data-action='weekly']")) {
-      const zoneId = t.dataset.zone;
-      const schedule = { ...(this._data?.weekly_profiles?.[zoneId] || {}) };
+      const schedule = { ...(this._data?.weekly_profiles?.[t.dataset.zone] || {}) };
       schedule[t.dataset.day] = t.value;
-      this._call({ type: `${DOMAIN}/zone/weekly/set`, zone_id: zoneId, schedule }, "Pianificazione aggiornata");
+      this._call(
+        { type: `${DOMAIN}/zone/weekly/set`, zone_id: t.dataset.zone, schedule },
+        "Settimana aggiornata",
+      );
     }
-  }
-
-  _onInput(e) {
   }
 }
 
@@ -465,28 +279,13 @@ class HaThermoCardEditor extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._config = {};
     this._zones = [];
-    this._loaded = false;
   }
   set hass(h) {
     this._hass = h;
-    if (!this._loaded) {
-      this._loaded = true;
-      this._loadZones();
-    }
+    if (!this._zones.length) this._loadZones();
   }
   setConfig(config) {
-    this._config = {
-      title: "Termostato",
-      show_graph: true,
-      show_slider: true,
-      show_weekly: true,
-      show_profiles_manager: true,
-      show_bypass: true,
-      show_enable: true,
-      show_status: true,
-      bypass_minutes: 60,
-      ...config,
-    };
+    this._config = { title: "Termostato", show_graph: true, show_slider: true, show_weekly: true, show_status: true, ...config };
     this._render();
   }
   async _loadZones() {
@@ -498,26 +297,24 @@ class HaThermoCardEditor extends HTMLElement {
     this._render();
   }
   _render() {
-    const zoneOpts = getZoneOptions(this._zones, false);
-    const c = this._config;
-    const chk = (k) => `<label class="row"><input type="checkbox" data-field="${k}" ${c[k] !== false ? "checked" : ""}>${k}</label>`;
-    this.shadowRoot.innerHTML = `<style>.form{display:grid;gap:12px;padding:8px 0}label{display:grid;gap:4px;font-size:0.9rem}input,select{padding:6px;border-radius:6px;border:1px solid var(--divider-color)}</style>
-      <div class="form">
-      <label>Titolo<input type="text" data-field="title" value="${esc(c.title || "")}"></label>
-      <label>Zona<select data-field="zone"><option value="all">Tutte</option>${zoneOpts}</select></label>
-      ${chk("show_graph")}${chk("show_slider")}${chk("show_weekly")}${chk("show_profiles_manager")}${chk("show_bypass")}${chk("show_enable")}${chk("show_status")}
-      <label>Minuti bypass<input type="number" data-field="bypass_minutes" value="${esc(c.bypass_minutes || 60)}"></label>
-    </div>`;
-    this.shadowRoot.querySelectorAll("input,select").forEach((el) => el.addEventListener("change", () => this._changed()));
+    this.shadowRoot.innerHTML = `<style>label{display:grid;gap:4px;margin:8px 0;font-size:0.9rem}input,select{padding:6px}</style>
+      <label>Titolo<input data-f="title" value="${esc(this._config.title || "")}"></label>
+      <label>Zona<select data-f="zone">${getZoneOptions(this._zones, false)}</select></label>
+      <label><input type="checkbox" data-f="show_graph" ${this._config.show_graph !== false ? "checked" : ""}> Mostra grafico</label>
+      <label><input type="checkbox" data-f="show_slider" ${this._config.show_slider !== false ? "checked" : ""}> Mostra slider</label>
+      <label><input type="checkbox" data-f="show_weekly" ${this._config.show_weekly !== false ? "checked" : ""}> Mostra settimana</label>`;
+    this.shadowRoot.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => this._emit()));
   }
-  _changed() {
-    const get = (f) => this.shadowRoot.querySelector(`[data-field="${f}"]`);
-    const bools = ["show_graph", "show_slider", "show_weekly", "show_profiles_manager", "show_bypass", "show_enable", "show_status"];
-    const config = { ...this._config, title: get("title")?.value, zone: get("zone")?.value };
-    bools.forEach((k) => (config[k] = get(k)?.checked));
-    const v = Number(get("bypass_minutes")?.value);
-    if (v > 0) config.bypass_minutes = v;
-    this._config = config;
+  _emit() {
+    const g = (k) => this.shadowRoot.querySelector(`[data-f="${k}"]`);
+    const config = {
+      ...this._config,
+      title: g("title")?.value,
+      zone: g("zone")?.value,
+      show_graph: g("show_graph")?.checked,
+      show_slider: g("show_slider")?.checked,
+      show_weekly: g("show_weekly")?.checked,
+    };
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
   }
 }
@@ -530,7 +327,7 @@ if (!window.customCards.some((c) => c.type === "ha-thermo-card")) {
   window.customCards.push({
     type: "ha-thermo-card",
     name: "HA Thermo",
-    description: "Termostato con profili orari condivisi e pianificazione settimanale.",
+    description: "Termostato: automatico/manuale, temperatura e pianificazione settimanale profili.",
     preview: true,
     documentationURL: "https://github.com/marcopiccinni/ha_thermo",
   });

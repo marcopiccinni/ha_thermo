@@ -38,6 +38,7 @@ from .const import (
     DEFAULT_REASSERT_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SUMMER_TEMP,
+    DEFAULT_PROFILE_IDS,
     DOMAIN,
     MAX_MANUAL_HOLD,
     MAX_REASSERT_INTERVAL,
@@ -49,7 +50,8 @@ from .const import (
     MIN_TEMP,
     TEMP_STEP,
 )
-from .models import Zone
+from .manager import ThermoManager
+from .models import Profile, Zone, slugify
 
 _AWAY = "away"
 _BACK = "back"
@@ -203,7 +205,15 @@ class ThermoOptionsFlow(OptionsFlow):
         self._options: dict[str, Any] = {}
         self._zones: list[dict[str, Any]] = []
         self._edit_zone_id: str | None = None
+        self._edit_profile_id: str | None = None
+        self._clone_profile_id: str | None = None
         self._loaded = False
+
+    def _get_manager(self) -> ThermoManager | None:
+        manager = self.hass.data.get(DOMAIN, {}).get("manager")
+        if manager is None or manager.entry.entry_id != self.config_entry.entry_id:
+            return None
+        return manager
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -216,7 +226,7 @@ class ThermoOptionsFlow(OptionsFlow):
             self._loaded = True
         return self.async_show_menu(
             step_id="init",
-            menu_options=["settings", "zones", "finish"],
+            menu_options=["settings", "zones", "profiles", "finish"],
         )
 
     async def async_step_settings(
@@ -235,7 +245,7 @@ class ThermoOptionsFlow(OptionsFlow):
     ) -> FlowResult:
         choices: dict[str, str] = {_ADD: "Aggiungi zona"}
         for zone in self._zones:
-            zone_id = str(zone.get(CONF_ZONE_ID))
+            zone_id = str(zone.get(CONF_ZONE_ID) or zone.get("id"))
             name = str(zone.get(CONF_ZONE_NAME) or zone_id)
             climate = str(zone.get(CONF_CLIMATE_ENTITY) or "")
             choices[f"edit:{zone_id}"] = f"Modifica {name} ({climate})"
@@ -318,7 +328,7 @@ class ThermoOptionsFlow(OptionsFlow):
 
     def _current_zone(self) -> Zone | None:
         for item in self._zones:
-            if str(item.get(CONF_ZONE_ID)) == self._edit_zone_id:
+            if str(item.get(CONF_ZONE_ID) or item.get("id")) == self._edit_zone_id:
                 return Zone.from_dict(item)
         return None
 
@@ -389,6 +399,205 @@ class ThermoOptionsFlow(OptionsFlow):
         )
         fields[sensor_key] = _temperature_sensor_selector()
         return vol.Schema(fields)
+
+    def _profile_hourly_schema(self, profile: Profile | None) -> vol.Schema:
+        default_temp = DEFAULT_COMFORT_TEMP
+        fields: dict[Any, Any] = {
+            vol.Required(
+                "name",
+                default=profile.name if profile else "Nuovo profilo",
+            ): str,
+            vol.Optional("uniform_temp"): _number(MIN_TEMP, MAX_TEMP, TEMP_STEP),
+        }
+        if profile:
+            profile.ensure_hourly(default_temp)
+            hourly = list(profile.hourly)
+        else:
+            hourly = [default_temp] * 24
+        for hour in range(24):
+            fields[
+                vol.Required(f"hour_{hour}", default=hourly[hour])
+            ] = _number(MIN_TEMP, MAX_TEMP, TEMP_STEP)
+        return vol.Schema(fields)
+
+    def _profile_dict_from_input(
+        self, user_input: dict[str, Any], profile_id: str | None
+    ) -> dict[str, Any]:
+        name = str(user_input.get("name") or "").strip()
+        if not name:
+            raise ValueError("profile_name_required")
+        pid = profile_id or slugify(name)
+        if user_input.get("uniform_temp") is not None:
+            hourly = [float(user_input["uniform_temp"])] * 24
+        else:
+            hourly = [float(user_input[f"hour_{h}"]) for h in range(24)]
+        icon = "mdi:home-thermometer"
+        if profile_id:
+            manager = self._get_manager()
+            if manager and profile_id in manager.profiles:
+                icon = manager.profiles[profile_id].icon
+        return {
+            "id": pid,
+            "name": name,
+            "icon": icon,
+            "hourly": hourly,
+        }
+
+    def _profile_error(self, err: ValueError) -> str:
+        code = str(err)
+        mapping = {
+            "profile_default_protected": "profile_default_protected",
+            "profile_last_one": "profile_last_one",
+            "profile_exists": "profile_exists",
+            "unknown_profile": "unknown_profile",
+            "profile_name_required": "profile_name_required",
+        }
+        return mapping.get(code, "unknown")
+
+    async def async_step_profiles(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        manager = self._get_manager()
+        errors: dict[str, str] = {}
+        if manager is None:
+            return self.async_show_menu(step_id="profiles", menu_options=["init"])
+
+        choices: dict[str, str] = {_ADD: "Aggiungi profilo", _BACK: "Indietro"}
+        for profile in sorted(manager.profiles.values(), key=lambda p: p.name.lower()):
+            pid = profile.id
+            avg = round(sum(profile.hourly) / max(len(profile.hourly), 1), 1)
+            choices[f"edit:{pid}"] = f"Modifica {profile.name} (~{avg}°)"
+            choices[f"clone:{pid}"] = f"Duplica {profile.name}"
+            if pid not in DEFAULT_PROFILE_IDS:
+                choices[f"delete:{pid}"] = f"Elimina {profile.name}"
+
+        if user_input is not None:
+            action = str(user_input.get("profile_action"))
+            if action == _ADD:
+                self._edit_profile_id = None
+                return await self.async_step_profile_add()
+            if action == _BACK:
+                return await self.async_step_init()
+            kind, _, pid = action.partition(":")
+            if kind == "edit":
+                self._edit_profile_id = pid
+                return await self.async_step_profile_edit()
+            if kind == "clone":
+                self._clone_profile_id = pid
+                return await self.async_step_profile_clone()
+            if kind == "delete":
+                try:
+                    await manager.async_delete_profile(pid)
+                except ValueError as err:
+                    errors["base"] = self._profile_error(err)
+                else:
+                    return await self.async_step_profiles()
+
+        return self.async_show_form(
+            step_id="profiles",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("profile_action"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                selector.SelectOptionDict(value=value, label=label)
+                                for value, label in choices.items()
+                            ],
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    )
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_profile_add(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        return await self._profile_form("profile_add", user_input, None)
+
+    async def async_step_profile_edit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        manager = self._get_manager()
+        profile = (
+            manager.profiles.get(self._edit_profile_id)
+            if manager and self._edit_profile_id
+            else None
+        )
+        return await self._profile_form("profile_edit", user_input, profile)
+
+    async def _profile_form(
+        self,
+        step_id: str,
+        user_input: dict[str, Any] | None,
+        profile: Profile | None,
+    ) -> FlowResult:
+        errors: dict[str, str] = {}
+        manager = self._get_manager()
+        if manager is None:
+            return await self.async_step_profiles()
+
+        if user_input is not None:
+            try:
+                payload = self._profile_dict_from_input(
+                    user_input,
+                    profile.id if profile else None,
+                )
+                if profile is None:
+                    await manager.async_create_profile(payload)
+                else:
+                    await manager.async_update_profile(payload)
+            except ValueError as err:
+                errors["base"] = self._profile_error(err)
+            else:
+                return await self.async_step_profiles()
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self._profile_hourly_schema(profile),
+            errors=errors,
+            description_placeholders={
+                "hint": "Imposta le temperature per ogni ora (00-23). Opzionale: uniforma tutte le ore."
+            },
+        )
+
+    async def async_step_profile_clone(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        manager = self._get_manager()
+        errors: dict[str, str] = {}
+        if manager is None or not self._clone_profile_id:
+            return await self.async_step_profiles()
+        source = manager.profiles.get(self._clone_profile_id)
+        if source is None:
+            return await self.async_step_profiles()
+
+        if user_input is not None:
+            name = str(user_input.get("name") or "").strip()
+            if not name:
+                errors["base"] = "profile_name_required"
+            else:
+                try:
+                    await manager.async_clone_profile(self._clone_profile_id, name)
+                except ValueError as err:
+                    errors["base"] = self._profile_error(err)
+                else:
+                    self._clone_profile_id = None
+                    return await self.async_step_profiles()
+
+        return self.async_show_form(
+            step_id="profile_clone",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "name",
+                        default=f"{source.name} (copia)",
+                    ): str,
+                }
+            ),
+            errors=errors,
+        )
 
     async def async_step_finish(
         self, user_input: dict[str, Any] | None = None

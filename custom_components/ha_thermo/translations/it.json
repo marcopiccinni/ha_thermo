@@ -11,8 +11,35 @@
     "step": {
       "init": {
         "title": "Opzioni HA Thermo",
-        "description": "Configura zone e impostazioni."
+        "description": "Configura zone, profili condivisi e parametri.",
+        "menu_options": {
+          "settings": "Parametri generali",
+          "zones": "Zone termostato",
+          "profiles": "Profili condivisi (curve 24 ore)",
+          "finish": "Salva e chiudi"
+        }
+      },
+      "profiles": {
+        "title": "Profili condivisi",
+        "description": "Ogni profilo è una curva temperatura 00-23 valida per tutti i termostati."
+      },
+      "profile_add": {
+        "title": "Nuovo profilo"
+      },
+      "profile_edit": {
+        "title": "Modifica profilo"
+      },
+      "profile_clone": {
+        "title": "Duplica profilo"
       }
+    },
+    "error": {
+      "not_loaded": "L'integrazione non è caricata. Riavvia Home Assistant.",
+      "profile_default_protected": "I profili predefiniti non possono essere eliminati.",
+      "profile_last_one": "Deve restare almeno un profilo.",
+      "profile_exists": "Esiste già un profilo con questo identificativo.",
+      "unknown_profile": "Profilo sconosciuto.",
+      "profile_name_required": "Il nome del profilo è obbligatorio."
     }
   },
   "entity": {

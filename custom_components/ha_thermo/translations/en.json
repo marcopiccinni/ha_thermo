@@ -11,8 +11,35 @@
     "step": {
       "init": {
         "title": "HA Thermo Options",
-        "description": "Configure zones and settings."
+        "description": "Configure zones, shared profiles and settings.",
+        "menu_options": {
+          "settings": "General settings",
+          "zones": "Thermostat zones",
+          "profiles": "Shared profiles (24h curve)",
+          "finish": "Save and close"
+        }
+      },
+      "profiles": {
+        "title": "Shared profiles",
+        "description": "Each profile is one 00-23 temperature curve for all thermostats."
+      },
+      "profile_add": {
+        "title": "New profile"
+      },
+      "profile_edit": {
+        "title": "Edit profile"
+      },
+      "profile_clone": {
+        "title": "Duplicate profile"
       }
+    },
+    "error": {
+      "not_loaded": "Integration is not loaded. Restart Home Assistant.",
+      "profile_default_protected": "Built-in profiles cannot be deleted.",
+      "profile_last_one": "At least one profile must remain.",
+      "profile_exists": "A profile with this id already exists.",
+      "unknown_profile": "Unknown profile.",
+      "profile_name_required": "Profile name is required."
     }
   },
   "entity": {

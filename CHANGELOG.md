@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.6
+
+- **Card controllo semplificata**: rimossi pulsanti *Bypass 60 min* e *Disattiva controllo* (servizi, entità `switch`/`binary_sensor` bypass e `ha_thermo.start_bypass` restano disponibili per automazioni).
+- **Slider temperatura**: usa `set_temperature` invece del bypass temporaneo.
+- **Profili globali**: gestione (crea/modifica/duplica/elimina, griglia oraria 00–23) spostata nel **flusso opzioni** dell'integrazione (Impostazioni → Dispositivi e servizi → HA Thermo → Configura → Profili condivisi). Aggiornamenti live su tutte le card.
+- **Card**: restano collegamento termostato, auto/manuale, controllo temperatura e selezione profilo per giorno della settimana.
+
 ## 0.3.5
 
 - **Profili = sola curva 24h condivisa** (`hourly[0..23]`): niente più curve per zona/giorno dentro il profilo.

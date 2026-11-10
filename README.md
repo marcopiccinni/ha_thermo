@@ -47,28 +47,20 @@ title: Studio
 zone: climate.studio
 show_graph: true
 show_slider: true
-show_profile: true
-show_bypass: true
-show_enable: true
+show_weekly: true
 show_status: true
-bypass_minutes: 60
-hold_minutes: 60
 ```
 
 | Opzione | Default | Descrizione |
 | --- | --- | --- |
 | `title` | `Termostato` | Titolo della card. |
 | `zone` | — | Entità `climate` della zona. |
-| `show_graph` | `false` | Mostra il grafico 24h. |
-| `show_slider` | `true` | Mostra slider e pulsanti ±. |
-| `show_profile` | `true` | Mostra selettore profilo. |
+| `show_graph` | `true` | Mostra il grafico 24h del profilo di oggi. |
+| `show_slider` | `true` | Mostra slider e pulsanti ± (override temperatura). |
 | `show_weekly` | `true` | Pianificazione Lun–Dom (profilo condiviso per giorno). |
-| `show_profiles_manager` | `true` | Gestione profili condivisi (curva oraria 24h). |
-| `show_bypass` | `true` | Mostra pulsanti bypass. |
-| `show_enable` | `true` | Mostra pulsante Auto/Off. |
-| `show_status` | `true` | Mostra stato (profilo, bypass). |
-| `bypass_minutes` | `60` | Durata bypass rapido. |
-| `hold_minutes` | `60` | Durata override manuale. |
+| `show_status` | `true` | Mostra profilo attivo. |
+
+Profili condivisi (curve 24h): **Impostazioni → Dispositivi e servizi → HA Thermo → Configura → Profili condivisi**.
 
 ### Grafico (`ha-thermo-graph-card`)
 
