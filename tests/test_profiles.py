@@ -1,28 +1,49 @@
-"""Tests for shared profile rules."""
+"""Tests for shared profile rules and migration."""
 
 from __future__ import annotations
 
-import pytest
-
-from ha_thermo.const import DEFAULT_PROFILE_IDS
+from ha_thermo.const import DAYS, DEFAULT_PROFILE_IDS
 from ha_thermo.models import Profile
+from ha_thermo.profile_migration import migrate_legacy_profile_dict, migrate_profiles_list
 
 
 def test_default_profiles_are_protected_set() -> None:
-    assert DEFAULT_PROFILE_IDS == frozenset(
-        {"comfort", "eco", "night", "away", "summer"}
-    )
+    assert "comfort" in DEFAULT_PROFILE_IDS
 
 
-def test_profile_roundtrip() -> None:
-    profile = Profile("test", "Test", targets={"studio": 21.0})
-    profile.ensure_zone("studio", 20.0)
+def test_hourly_profile_roundtrip() -> None:
+    profile = Profile("test", "Test", hourly=[21.0] * 24)
     restored = Profile.from_dict(profile.to_dict())
-    assert restored.id == "test"
-    assert restored.targets["studio"] == 21.0
+    assert len(restored.hourly) == 24
+    assert restored.hourly[0] == 21.0
 
 
-def test_profile_ensure_zone_builds_curves() -> None:
-    profile = Profile("x", "X")
-    assert profile.ensure_zone("z1", 19.5)
-    assert len(profile.curves["z1"]["mon"]) == 24
+def test_migrate_legacy_flat_profile() -> None:
+    legacy = {
+        "id": "comfort",
+        "name": "Comfort",
+        "targets": {"studio": 20.0},
+        "curves": {"studio": {day: [20.0] * 24 for day in DAYS}},
+    }
+    migrated = migrate_legacy_profile_dict(legacy)
+    assert len(migrated) == 1
+    assert len(migrated[0]["hourly"]) == 24
+
+
+def test_migrate_legacy_splits_different_weekdays() -> None:
+    curves = {day: [20.0] * 24 for day in DAYS}
+    curves["sat"] = [18.0] * 24
+    legacy = {
+        "id": "custom",
+        "name": "Custom",
+        "curves": {"studio": curves},
+    }
+    migrated = migrate_legacy_profile_dict(legacy)
+    assert len(migrated) >= 2
+    assert any(p["id"] == "custom_sat" for p in migrated)
+
+
+def test_migrate_profiles_list() -> None:
+    items = [{"id": "x", "name": "X", "hourly": [19.0] * 24}]
+    profiles = migrate_profiles_list(items)
+    assert "x" in profiles

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.5
+
+- **Profili = sola curva 24h condivisa** (`hourly[0..23]`): niente più curve per zona/giorno dentro il profilo.
+- **Pianificazione per termostato**: ogni giorno (Lun–Dom) sceglie quale profilo condiviso usare (`weekly_profiles`), API `ha_thermo/zone/weekly/set`.
+- **Editor profili** nella card: griglia oraria 00–23, crea/modifica/duplica/elimina; sincronizzazione live via `ha_thermo_profiles_changed` / `ha_thermo_zone_schedule_changed`.
+- **Migrazione storage schema 2**: profili legacy → orari (Lun rappresentativo; se i giorni differivano si creano profili aggiuntivi `Nome (Gio)` ecc.); assegnazioni 0.3.4 → tutti i giorni; 0.3.3 `weekly_schedules` → mappa settimanale.
+- **Eliminazione profilo**: giorni/zone che lo usavano → **Comfort** (invariato).
+
 ## 0.3.4
 
 - **Rimossa** la pianificazione “un profilo per giorno per termostato” introdotta in 0.3.3 (`weekly_schedules`, API `weekly/set` e relativa UI).

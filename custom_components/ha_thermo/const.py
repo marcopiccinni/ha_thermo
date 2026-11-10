@@ -52,6 +52,7 @@ EVENT_BYPASS_ENDED: Final = f"{DOMAIN}_bypass_ended"
 EVENT_TARGET_CHANGED: Final = f"{DOMAIN}_target_changed"
 EVENT_MANUAL_OVERRIDE: Final = f"{DOMAIN}_manual_override"
 EVENT_PROFILES_CHANGED: Final = f"{DOMAIN}_profiles_changed"
+EVENT_ZONE_SCHEDULE_CHANGED: Final = f"{DOMAIN}_zone_schedule_changed"
 
 # Built-in profiles that cannot be deleted from the UI
 DEFAULT_PROFILE_IDS: Final = frozenset(

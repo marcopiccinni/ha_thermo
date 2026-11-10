@@ -62,7 +62,8 @@ hold_minutes: 60
 | `show_graph` | `false` | Mostra il grafico 24h. |
 | `show_slider` | `true` | Mostra slider e pulsanti ±. |
 | `show_profile` | `true` | Mostra selettore profilo. |
-| `show_profiles_manager` | `true` | Gestione profili condivisi (crea/modifica/duplica/elimina). |
+| `show_weekly` | `true` | Pianificazione Lun–Dom (profilo condiviso per giorno). |
+| `show_profiles_manager` | `true` | Gestione profili condivisi (curva oraria 24h). |
 | `show_bypass` | `true` | Mostra pulsanti bypass. |
 | `show_enable` | `true` | Mostra pulsante Auto/Off. |
 | `show_status` | `true` | Mostra stato (profilo, bypass). |

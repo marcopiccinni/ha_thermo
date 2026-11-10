@@ -37,6 +37,7 @@ from .const import (
     EVENT_PROFILE_CHANGED,
     EVENT_TARGET_CHANGED,
     EVENT_PROFILES_CHANGED,
+    EVENT_ZONE_SCHEDULE_CHANGED,
     DAYS,
     DEFAULT_PROFILE_IDS,
     PROFILE_AUTO,
@@ -46,6 +47,7 @@ from .const import (
     entity_unique_id,
 )
 from .models import Bypass, Profile, Zone, slugify
+from .profile_migration import migrate_profiles_list
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ class ThermoManager:
         self.profiles: dict[str, Profile] = {}
         self.bypasses: dict[str, Bypass] = {}
         self.active_profiles: dict[str, str] = {}
+        self.weekly_profiles: dict[str, dict[str, str]] = {}
         self.pinned_profiles: dict[str, dict[str, Any]] = {}
         self.manual_overrides: dict[str, dict[str, Any]] = {}
         self.disabled_zones: set[str] = set()
@@ -78,7 +81,7 @@ class ThermoManager:
         raw = await self._store.async_load() or {}
         self._restore(raw)
         self._sync_zones()
-        self._migrate_legacy_weekly_schedules(raw)
+        self._migrate_storage_schema(raw)
         self._save()
 
     def _restore(self, raw: dict[str, Any]) -> None:
@@ -91,16 +94,34 @@ class ThermoManager:
             "scan_interval": raw.get("scan_interval", DEFAULT_SCAN_INTERVAL),
         }
 
-        profiles: dict[str, Profile] = {}
-        for item in raw.get("profiles") or []:
-            if not isinstance(item, dict):
+        if int(raw.get("schema_version", 1)) >= 2:
+            profiles: dict[str, Profile] = {}
+            for item in raw.get("profiles") or []:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    profile = Profile.from_dict(item)
+                    profiles[profile.id] = profile
+                except (TypeError, ValueError):
+                    _LOGGER.warning("Ignoring invalid profile: %s", item)
+            self.profiles = profiles or self._create_defaults()
+        else:
+            self.profiles = migrate_profiles_list(raw.get("profiles") or []) or self._create_defaults()
+
+        self.weekly_profiles = {}
+        for zone_id, schedule in (raw.get("weekly_profiles") or {}).items():
+            if not isinstance(schedule, dict):
                 continue
-            try:
-                profile = Profile.from_dict(item)
-                profiles[profile.id] = profile
-            except (TypeError, ValueError):
-                _LOGGER.warning("Ignoring invalid profile: %s", item)
-        self.profiles = profiles or self._create_defaults()
+            normalized: dict[str, str] = {}
+            for day, profile_id in schedule.items():
+                day_key = str(day)
+                if day_key not in DAYS:
+                    continue
+                pid = str(profile_id)
+                if pid in self.profiles:
+                    normalized[day_key] = pid
+            if normalized:
+                self.weekly_profiles[str(zone_id)] = normalized
 
         self.active_profiles = {
             str(zone): str(profile)
@@ -168,11 +189,9 @@ class ThermoManager:
                 id=pid,
                 name=name,
                 icon=icon,
-                targets={},
-                curves={},
-                days={},
+                hvac_mode="heat",
+                hourly=[float(temp)] * 24,
             )
-            profiles[pid].hvac_mode = "heat"
         return profiles
 
     def _sync_zones(self) -> None:
@@ -187,21 +206,20 @@ class ThermoManager:
             if zone_id not in current:
                 self.zones.pop(zone_id, None)
                 self.active_profiles.pop(zone_id, None)
+                self.weekly_profiles.pop(zone_id, None)
                 self.pinned_profiles.pop(zone_id, None)
                 self.manual_overrides.pop(zone_id, None)
                 self.disabled_zones.discard(zone_id)
         for zone_id, zone in current.items():
             if zone_id not in self.zones:
                 self.zones[zone_id] = zone
-                if zone_id not in self.active_profiles:
-                    default = self._default_profile_id()
-                    if default:
-                        self.active_profiles[zone_id] = default
+                self._ensure_weekly_schedule(zone_id)
         self.zones = current
 
     def _save(self) -> None:
         """Persist state to storage."""
         data = {
+            "schema_version": 2,
             "enabled": self.enabled,
             "disabled_zones": sorted(self.disabled_zones),
             "manual_hold": self.settings["manual_hold"],
@@ -209,6 +227,10 @@ class ThermoManager:
             "scan_interval": self.settings["scan_interval"],
             "profiles": [p.to_dict() for p in self.profiles.values()],
             "bypasses": [b.to_dict() for b in self.bypasses.values()],
+            "weekly_profiles": {
+                zone_id: dict(schedule)
+                for zone_id, schedule in self.weekly_profiles.items()
+            },
             "active_profiles": dict(self.active_profiles),
             "pinned_profiles": self._serialize_pins(),
             "manual_overrides": self._serialize_overrides(),
@@ -268,9 +290,9 @@ class ThermoManager:
                 if not isinstance(until, datetime) or until > now:
                     return profile_id
                 self.pinned_profiles.pop(zone_id, None)
-        active = self.active_profiles.get(zone_id)
-        if active in self.profiles:
-            return active
+        scheduled = self._scheduled_profile_id(zone_id, now)
+        if scheduled in self.profiles:
+            return scheduled
         return self._default_profile_id()
 
     async def async_tick(self) -> None:
@@ -352,13 +374,10 @@ class ThermoManager:
 
     def _base_target(self, zone: Zone, now: datetime) -> float:
         """Get base target from active profile."""
-        profile_id = self.active_profiles.get(zone.id)
-        profile = self.profiles.get(profile_id)
+        profile_id = self._resolve_profile(zone.id, now)
+        profile = self.profiles.get(profile_id) if profile_id else None
         if profile is not None:
-            curve = profile.curves.get(zone.id, {}).get(_day_key(now))
-            if curve:
-                hour = now.hour
-                return curve[hour] if 0 <= hour < 24 else zone.default_temp
+            return profile.target_at(now.hour, zone.default_temp)
         climate_target = self._climate_target(zone)
         if climate_target is not None:
             return climate_target
@@ -479,59 +498,95 @@ class ThermoManager:
     def _fire_profiles_changed(self) -> None:
         self._fire(EVENT_PROFILES_CHANGED, {})
 
-    def _migrate_legacy_weekly_schedules(self, raw: dict[str, Any]) -> None:
-        """Import one-shot assignment from removed 0.3.3 weekly_schedules storage."""
-        legacy = raw.get("weekly_schedules")
-        if not isinstance(legacy, dict) or not legacy:
-            return
-        now = dt_util.now()
-        day = _day_key(now)
-        migrated = False
-        for zone_id, schedule in legacy.items():
-            if not isinstance(schedule, dict):
-                continue
-            zone_key = str(zone_id)
-            if zone_key not in self.zones:
-                continue
-            profile_id = schedule.get(day) or next(iter(schedule.values()), None)
-            if not profile_id or str(profile_id) not in self.profiles:
-                continue
-            if zone_key in self.pinned_profiles:
-                continue
-            self.active_profiles[zone_key] = str(profile_id)
-            migrated = True
-        if migrated:
-            _LOGGER.info(
-                "Migrated legacy weekly_schedules to active_profiles (0.3.3 → 0.3.4)"
-            )
+    def _default_week_schedule(self, zone_id: str) -> dict[str, str]:
+        fallback = self._default_profile_id() or "comfort"
+        return {day: fallback for day in DAYS}
 
-    async def async_assign_profile(
-        self,
-        profile_id: str,
-        zones: list[str] | None = None,
-    ) -> None:
-        """Assign a shared profile for automatic mode (does not pin / manual override)."""
-        if profile_id not in self.profiles:
-            raise ValueError("unknown_profile")
-        zone_ids = self._resolve_zone_ids(zones)
-        profile = self.profiles[profile_id]
-        for z in self.zones.values():
-            profile.ensure_zone(z.id, z.default_temp)
-        for zone_id in zone_ids:
-            self.active_profiles[zone_id] = profile_id
-            self._applied_mode.pop(zone_id, None)
-            if not self.is_pinned(zone_id):
-                self._fire(
-                    EVENT_PROFILE_CHANGED,
-                    {
-                        ATTR_ZONE_ID: zone_id,
-                        ATTR_PROFILE_ID: profile_id,
-                        ATTR_PROFILE_NAME: profile.name,
-                        ATTR_SOURCE: "assign",
-                    },
+    def _ensure_weekly_schedule(self, zone_id: str) -> None:
+        if zone_id in self.weekly_profiles:
+            return
+        fallback = self.active_profiles.get(zone_id) or self._default_profile_id() or "comfort"
+        self.weekly_profiles[zone_id] = {day: fallback for day in DAYS}
+
+    def _scheduled_profile_id(self, zone_id: str, moment: datetime) -> str | None:
+        self._ensure_weekly_schedule(zone_id)
+        schedule = self.weekly_profiles.get(zone_id, {})
+        day = _day_key(moment)
+        profile_id = schedule.get(day) or schedule.get("mon")
+        if profile_id in self.profiles:
+            return str(profile_id)
+        return self._default_profile_id()
+
+    def _migrate_storage_schema(self, raw: dict[str, Any]) -> None:
+        """Migrate pre-0.3.5 storage (profiles + per-zone assignment)."""
+        fallback = self._default_profile_id() or "comfort"
+        schema = int(raw.get("schema_version", 1))
+        if schema < 2 or not self.weekly_profiles:
+            for zone_id in self.zones:
+                self._ensure_weekly_schedule(zone_id)
+                schedule = self.weekly_profiles[zone_id]
+                single = self.active_profiles.get(zone_id)
+                if single and single in self.profiles:
+                    for day in DAYS:
+                        schedule[day] = str(single)
+
+            legacy = raw.get("weekly_schedules") or {}
+            if isinstance(legacy, dict):
+                for zone_id, by_day in legacy.items():
+                    if not isinstance(by_day, dict) or str(zone_id) not in self.zones:
+                        continue
+                    schedule = self.weekly_profiles.setdefault(
+                        str(zone_id), self._default_week_schedule(str(zone_id))
+                    )
+                    for day in DAYS:
+                        pid = by_day.get(day)
+                        if pid and str(pid) in self.profiles:
+                            schedule[day] = str(pid)
+                    for day in DAYS:
+                        schedule.setdefault(day, fallback)
+
+            if schema < 2:
+                _LOGGER.info(
+                    "Migrated HA Thermo storage to schema 2 (hourly profiles + weekly map)"
                 )
+
+        for zone_id in self.zones:
+            self._ensure_weekly_schedule(zone_id)
+
+    async def async_set_zone_weekly(
+        self, zone_id: str, schedule: dict[str, str]
+    ) -> dict[str, str]:
+        """Assign shared profiles per weekday for one thermostat zone."""
+        if zone_id not in self.zones:
+            raise ValueError("unknown_zone")
+        normalized: dict[str, str] = {}
+        for day, profile_id in schedule.items():
+            day_key = str(day)
+            if day_key not in DAYS:
+                continue
+            pid = str(profile_id or "").strip()
+            if not pid:
+                continue
+            if pid not in self.profiles:
+                raise ValueError("unknown_profile")
+            normalized[day_key] = pid
+        if not normalized:
+            raise ValueError("schedule_empty")
+        current = self.weekly_profiles.get(zone_id, self._default_week_schedule(zone_id))
+        current.update(normalized)
+        for day in DAYS:
+            if day not in current or current[day] not in self.profiles:
+                current[day] = self._default_profile_id() or "comfort"
+        self.weekly_profiles[zone_id] = current
+        if not self.is_pinned(zone_id):
+            now = dt_util.now()
+            resolved = self._resolve_profile(zone_id, now)
+            if resolved:
+                self.active_profiles[zone_id] = resolved
         self._save()
-        self._notify()
+        self._fire(EVENT_ZONE_SCHEDULE_CHANGED, {ATTR_ZONE_ID: zone_id})
+        self._fire_profiles_changed()
+        return dict(self.weekly_profiles[zone_id])
 
     async def async_set_profile(
         self,
@@ -683,8 +738,8 @@ class ThermoManager:
         profile = Profile.from_dict(profile_dict)
         if profile.id in self.profiles:
             raise ValueError("profile_exists")
-        for zone in self.zones.values():
-            profile.ensure_zone(zone.id, zone.default_temp)
+        profile.ensure_hourly()
+        profile.validate()
         self.profiles[profile.id] = profile
         self._save()
         self._fire_profiles_changed()
@@ -695,8 +750,8 @@ class ThermoManager:
         profile = Profile.from_dict(profile_dict)
         if profile.id not in self.profiles:
             raise ValueError("unknown_profile")
-        for zone in self.zones.values():
-            profile.ensure_zone(zone.id, zone.default_temp)
+        profile.ensure_hourly()
+        profile.validate()
         self.profiles[profile.id] = profile
         self._save()
         self._fire_profiles_changed()
@@ -723,6 +778,14 @@ class ThermoManager:
         for zone_id, pin in list(self.pinned_profiles.items()):
             if pin.get("profile_id") == profile_id:
                 self.pinned_profiles.pop(zone_id, None)
+                affected.append(zone_id)
+        for zone_id, schedule in self.weekly_profiles.items():
+            changed = False
+            for day in DAYS:
+                if schedule.get(day) == profile_id:
+                    schedule[day] = fallback
+                    changed = True
+            if changed and zone_id not in affected:
                 affected.append(zone_id)
         for zone_id in self.zones:
             if self.active_profiles.get(zone_id) == profile_id:
@@ -753,19 +816,8 @@ class ThermoManager:
         new_profile = copy.deepcopy(source)
         new_profile.id = new_id
         new_profile.name = name
-        if zones:
-            zone_ids = self._resolve_zone_ids(zones)
-            new_profile.targets = {
-                zid: source.targets.get(zid, 20.0) for zid in zone_ids
-            }
-            new_profile.curves = {
-                zid: dict(source.curves.get(zid, {})) for zid in zone_ids
-            }
-            new_profile.days = {
-                zid: list(source.days.get(zid, [])) for zid in zone_ids
-            }
-        for zone in self.zones.values():
-            new_profile.ensure_zone(zone.id, zone.default_temp)
+        _ = zones
+        new_profile.ensure_hourly()
         self.profiles[new_id] = new_profile
         self._save()
         self._fire_profiles_changed()
@@ -932,6 +984,10 @@ class ThermoManager:
                 for bypass in self.bypasses.values()
                 if bypass.until > now
             ],
+            "weekly_profiles": {
+                zone_id: dict(schedule)
+                for zone_id, schedule in self.weekly_profiles.items()
+            },
             "active_profiles": dict(self.active_profiles),
             "pinned_profiles": {
                 zone_id: pin.get("profile_id")
@@ -1009,14 +1065,10 @@ class ThermoManager:
         out: list[float] = []
         for hour in range(24):
             moment = start + timedelta(hours=hour)
-            profile_id = self.active_profiles.get(zone.id)
-            profile = self.profiles.get(profile_id)
+            profile_id = self._resolve_profile(zone.id, moment)
+            profile = self.profiles.get(profile_id) if profile_id else None
             if profile:
-                curve = profile.curves.get(zone.id, {}).get(_day_key(moment))
-                if curve and 0 <= hour < 24:
-                    out.append(round(curve[hour], 2))
-                else:
-                    out.append(zone.default_temp)
+                out.append(round(profile.target_at(moment.hour, zone.default_temp), 2))
             else:
                 climate = self._climate_target(zone)
                 out.append(climate if climate is not None else zone.default_temp)

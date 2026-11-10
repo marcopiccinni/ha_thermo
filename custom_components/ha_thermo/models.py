@@ -105,79 +105,38 @@ class Zone:
 
 @dataclass(slots=True)
 class Profile:
-    """A named weekly schedule: a 7x24 curve for every zone."""
+    """A shared 24-hour target temperature curve (global, not per thermostat)."""
 
     id: str
     name: str
     icon: str = PROFILE_ICON
     hvac_mode: str | None = None
-    targets: dict[str, float] = field(default_factory=dict)
-    curves: dict[str, dict[str, list[float]]] = field(default_factory=dict)
-    days: dict[str, list[str]] = field(default_factory=dict)
+    hourly: list[float] = field(default_factory=list)
 
-    def ensure_zone(self, zone_id: str, default_temp: float) -> bool:
-        """Create missing per-zone data. Return True when something changed."""
-        changed = False
-        default = _clamp_temp(default_temp)
-        if zone_id not in self.targets:
-            self.targets[zone_id] = default
-            changed = True
-        zone_curves = self.curves.setdefault(zone_id, {})
-        for day in DAYS:
-            curve = zone_curves.get(day)
-            if not isinstance(curve, list) or len(curve) != HOURS_IN_DAY:
-                zone_curves[day] = _norm_curve(curve, default)
-                changed = True
-        if zone_id not in self.days:
-            self.days[zone_id] = list(DAYS)
-            changed = True
-        return changed
+    def ensure_hourly(self, default: float = 20.0) -> bool:
+        """Ensure the profile has exactly 24 hourly setpoints."""
+        if len(self.hourly) == HOURS_IN_DAY:
+            return False
+        self.hourly = _norm_curve(self.hourly, default)
+        return True
 
-    def enabled_days(self, zone_id: str) -> list[str]:
-        return list(self.days.get(zone_id, DAYS))
-
-    def target_for(
-        self, zone_id: str, day: str, hour: int, fallback: float
-    ) -> float:
-        """Resolve the target for a zone/day/hour, with safe fallbacks."""
-        if day not in DAYS or hour < 0 or hour >= HOURS_IN_DAY:
-            return _clamp_temp(fallback)
-        if day not in self.enabled_days(zone_id):
-            return _clamp_temp(self.targets.get(zone_id, fallback))
-        curve = self.curves.get(zone_id, {}).get(day)
-        if isinstance(curve, list) and len(curve) == HOURS_IN_DAY:
-            return _clamp_temp(curve[hour])
-        return _clamp_temp(self.targets.get(zone_id, fallback))
+    def target_at(self, hour: int, fallback: float = 20.0) -> float:
+        """Return the target temperature for a clock hour (0-23)."""
+        if 0 <= hour < HOURS_IN_DAY and len(self.hourly) == HOURS_IN_DAY:
+            return _clamp_temp(self.hourly[hour])
+        return _clamp_temp(fallback)
 
     def clone(
         self, new_id: str, new_name: str, zone_ids: list[str] | None = None
     ) -> Profile:
-        """Return an independent deep copy, optionally limited to some zones."""
-        selected = (
-            set(zone_ids)
-            if zone_ids is not None
-            else set(self.targets) | set(self.curves) | set(self.days)
-        )
+        """Return an independent deep copy (zone_ids kept for API compatibility)."""
+        _ = zone_ids
         return Profile(
             id=new_id,
             name=new_name,
             icon=self.icon,
             hvac_mode=self.hvac_mode,
-            targets={
-                zone: value
-                for zone, value in self.targets.items()
-                if zone in selected
-            },
-            curves={
-                zone: {day: list(values) for day, values in curves.items()}
-                for zone, curves in self.curves.items()
-                if zone in selected
-            },
-            days={
-                zone: list(values)
-                for zone, values in self.days.items()
-                if zone in selected
-            },
+            hourly=list(self.hourly),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -186,42 +145,27 @@ class Profile:
             "name": self.name,
             "icon": self.icon,
             "hvac_mode": self.hvac_mode,
-            "targets": dict(self.targets),
-            "curves": {
-                zone: {day: list(values) for day, values in curves.items()}
-                for zone, curves in self.curves.items()
-            },
-            "days": {zone: list(values) for zone, values in self.days.items()},
+            "hourly": list(self.hourly),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Profile:
         name = str(data.get("name") or data.get("id") or "Profilo")
+        default_temp = 20.0
+        hourly_raw = data.get("hourly")
+        hourly = (
+            _norm_curve(hourly_raw, default_temp)
+            if isinstance(hourly_raw, list)
+            else []
+        )
         profile = cls(
             id=str(data.get("id") or _slug(name)),
             name=name,
             icon=str(data.get("icon") or PROFILE_ICON),
             hvac_mode=data.get("hvac_mode") or None,
+            hourly=hourly,
         )
-        targets = data.get("targets") or {}
-        if isinstance(targets, dict):
-            for zone_id, value in targets.items():
-                profile.targets[str(zone_id)] = _clamp_temp(_float(value, 20.0))
-        curves = data.get("curves") or {}
-        if isinstance(curves, dict):
-            for zone_id, zone_curves in curves.items():
-                if not isinstance(zone_curves, dict):
-                    continue
-                default = profile.targets.get(str(zone_id), 20.0)
-                profile.curves[str(zone_id)] = {
-                    str(day): _norm_curve(values, default)
-                    for day, values in zone_curves.items()
-                    if str(day) in DAYS
-                }
-        days = data.get("days") or {}
-        if isinstance(days, dict):
-            for zone_id, values in days.items():
-                profile.days[str(zone_id)] = _norm_days(values)
+        profile.ensure_hourly(default_temp)
         return profile
 
     def validate(self) -> None:
@@ -237,15 +181,10 @@ class Profile:
             "fan_only",
         }:
             raise ValueError("profile_invalid_hvac_mode")
-        for value in self.targets.values():
-            if not MIN_TEMP <= float(value) <= MAX_TEMP:
-                raise ValueError("temperature_out_of_range")
-        for curves in self.curves.values():
-            for day, curve in curves.items():
-                if day not in DAYS or len(curve) != HOURS_IN_DAY:
-                    raise ValueError("profile_invalid_curve")
-                if any(not MIN_TEMP <= float(v) <= MAX_TEMP for v in curve):
-                    raise ValueError("temperature_out_of_range")
+        if len(self.hourly) != HOURS_IN_DAY:
+            raise ValueError("profile_invalid_curve")
+        if any(not MIN_TEMP <= float(v) <= MAX_TEMP for v in self.hourly):
+            raise ValueError("temperature_out_of_range")
 
 
 @dataclass(slots=True)

@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.3.4";
+export const INTEGRATION_VERSION = "0.3.5";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -9,6 +9,7 @@ export const EVENT_TYPES = [
   `${DOMAIN}_profile_override_started`,
   `${DOMAIN}_profile_override_ended`,
   `${DOMAIN}_profiles_changed`,
+  `${DOMAIN}_zone_schedule_changed`,
 ];
 export const WEEK_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 export const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -20,12 +21,6 @@ export const esc = (value) =>
 export const round = (v) => (v == null ? null : Math.round(v * 2) / 2);
 
 export const formatTemp = (v) => (v == null || Number.isNaN(Number(v)) ? "--" : `${(Math.round(Number(v) * 10) / 10).toFixed(1)}°`);
-
-export const formatTime = (v) => {
-  if (!v) return "--";
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? "--" : d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
-};
 
 export const formatRemaining = (s) => {
   if (s == null) return "--";
@@ -55,31 +50,41 @@ export const getZoneOptions = (zones, includeAll = false, allLabel = "Tutte le z
   return opts.join("");
 };
 
+export const profileOptions = (profiles, selected) =>
+  (profiles || [])
+    .map((p) => `<option value="${esc(p.id)}" ${selected === p.id ? "selected" : ""}>${esc(p.name)}</option>`)
+    .join("");
+
 export const renderChart = (zone, profile, data, opts = {}) => {
   const showTarget = opts.show_target !== false;
   const showCurrent = opts.show_current !== false;
   const showGrid = opts.show_grid !== false;
-  const day = todayKey();
-  const forecast = Array.isArray(zone.forecast) && zone.forecast.length === 24 ? zone.forecast : null;
-  const rawCurve = profile?.curves?.[zone.id]?.[day];
+  const forecast = Array.isArray(zone?.forecast) && zone.forecast.length === 24 ? zone.forecast : null;
   const curve = forecast
     ? forecast.map(Number)
-    : Array.isArray(rawCurve) && rawCurve.length === 24
-      ? rawCurve.map(Number)
+    : Array.isArray(profile?.hourly) && profile.hourly.length === 24
+      ? profile.hourly.map(Number)
       : null;
-  const target = zone.target_temperature ?? profile?.targets?.[zone.id] ?? zone.default_temp ?? 20;
-  const current = zone.current_temperature;
+  const target = zone?.target_temperature ?? zone?.default_temp ?? 20;
+  const current = zone?.current_temperature;
 
-  const W = 300, H = 170, left = 36, right = 10, top = 12, bottom = 22;
-  const plotW = W - left - right, plotH = H - top - bottom;
+  const W = 300,
+    H = 170,
+    left = 36,
+    right = 10,
+    top = 12,
+    bottom = 22;
+  const plotW = W - left - right,
+    plotH = H - top - bottom;
 
   const series = [];
   if (curve) series.push(...curve);
   if (showTarget && target != null) series.push(Number(target));
   if (showCurrent && current != null) series.push(Number(current));
-  if (!series.length) series.push(Number(zone.default_temp ?? 20));
+  if (!series.length) series.push(Number(zone?.default_temp ?? 20));
 
-  let dmin = Math.min(...series), dmax = Math.max(...series);
+  let dmin = Math.min(...series),
+    dmax = Math.max(...series);
   const minSpan = 2;
   if (dmax - dmin < minSpan) {
     const mid = (dmin + dmax) / 2;
@@ -95,8 +100,7 @@ export const renderChart = (zone, profile, data, opts = {}) => {
   const fy = (t) => y(t).toFixed(1);
 
   const gridTicks = [];
-  const ticks = 4;
-  for (let i = 0; i < ticks; i++) gridTicks.push(dmin + ((dmax - dmin) * i) / (ticks - 1));
+  for (let i = 0; i < 4; i++) gridTicks.push(dmin + ((dmax - dmin) * i) / 3);
 
   const grid = showGrid
     ? gridTicks
@@ -126,19 +130,15 @@ export const renderChart = (zone, profile, data, opts = {}) => {
   if (curve) {
     const pts = curve.map((t, h) => `${x(h).toFixed(1)},${fy(t)}`).join(" ");
     curveLine = `<polyline fill="none" stroke="var(--accent-color)" stroke-width="2" points="${pts}" stroke-linejoin="round"/>`;
-    dots = curve
-      .map((t, h) => `<circle cx="${x(h).toFixed(1)}" cy="${fy(t)}" r="1.6" fill="var(--accent-color)"/>`)
-      .join("");
+    dots = curve.map((t, h) => `<circle cx="${x(h).toFixed(1)}" cy="${fy(t)}" r="1.6" fill="var(--accent-color)"/>`).join("");
   } else {
-    curveLine = `<text x="${(left + (W - right)) / 2}" y="${top + plotH / 2}" text-anchor="middle" font-size="9" fill="var(--secondary-text-color)">Nessuna curva per ${DAY_LABELS[day]}</text>`;
+    curveLine = `<text x="${(left + (W - right)) / 2}" y="${top + plotH / 2}" text-anchor="middle" font-size="9" fill="var(--secondary-text-color)">Nessuna curva</text>`;
   }
 
   return `<svg class="curve" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${grid}${hourLabels}${targetLine}${currentLine}${curveLine}${dots}</svg>`;
 };
 
-export const callWS = async (hass, msg) => {
-  return await hass.callWS(msg);
-};
+export const callWS = async (hass, msg) => await hass.callWS(msg);
 
 export const slugProfileId = (name) =>
   String(name || "profilo")
@@ -148,34 +148,21 @@ export const slugProfileId = (name) =>
     .replace(/^_|_$/g, "")
     .slice(0, 48) || "profilo";
 
-export const flattenProfileZoneTemperature = (profile, zoneId, temperature) => {
-  const temp = Number(temperature);
+export const newProfileDraft = (name, temperature = 20) => ({
+  id: slugProfileId(name),
+  name: name || "Nuovo profilo",
+  icon: "mdi:home-thermometer",
+  hourly: Array.from({ length: 24 }, () => Number(temperature)),
+});
+
+export const uniformProfileHourly = (profile, temperature) => {
   const next = JSON.parse(JSON.stringify(profile));
-  next.targets = { ...(next.targets || {}), [zoneId]: temp };
-  next.curves = { ...(next.curves || {}) };
-  const dayCurves = {};
-  for (const day of WEEK_DAYS) {
-    dayCurves[day] = Array.from({ length: 24 }, () => temp);
-  }
-  next.curves[zoneId] = dayCurves;
-  next.days = { ...(next.days || {}), [zoneId]: [...WEEK_DAYS] };
+  next.hourly = Array.from({ length: 24 }, () => Number(temperature));
   return next;
 };
 
-export const newProfileDraft = (name, zoneId, temperature = 20) => {
-  const id = slugProfileId(name);
-  return flattenProfileZoneTemperature(
-    { id, name, icon: "mdi:home-thermometer", targets: {}, curves: {}, days: {} },
-    zoneId,
-    temperature,
-  );
-};
-
-export const profileZoneTemperature = (profile, zoneId, fallback = 20) => {
-  const target = profile?.targets?.[zoneId];
-  if (target != null && !Number.isNaN(Number(target))) return Number(target);
-  const day = todayKey();
-  const curve = profile?.curves?.[zoneId]?.[day];
-  if (Array.isArray(curve) && curve.length) return Number(curve[0]);
-  return fallback;
+export const profileAverageTemp = (profile, fallback = 20) => {
+  if (!Array.isArray(profile?.hourly) || !profile.hourly.length) return fallback;
+  const sum = profile.hourly.reduce((a, b) => a + Number(b), 0);
+  return Math.round((sum / profile.hourly.length) * 10) / 10;
 };
