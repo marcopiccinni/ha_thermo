@@ -175,13 +175,13 @@ async def ws_set_temperature(
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{DOMAIN}/weekly/set",
-        vol.Required(ATTR_ZONE_ID): cv.string,
-        vol.Required("schedule"): dict,
+        vol.Required("type"): f"{DOMAIN}/profile/assign",
+        vol.Required(ATTR_PROFILE): cv.string,
+        _ZONES: vol.All(cv.ensure_list, [cv.string]),
     }
 )
 @websocket_api.async_response
-async def ws_set_weekly_schedule(
+async def ws_assign_profile(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict,
@@ -192,7 +192,7 @@ async def ws_set_weekly_schedule(
     await _execute(
         connection,
         msg,
-        lambda: manager.async_set_weekly_schedule(msg[ATTR_ZONE_ID], msg["schedule"]),
+        lambda: manager.async_assign_profile(msg[ATTR_PROFILE], msg.get("zones")),
     )
 
 
@@ -425,7 +425,7 @@ COMMANDS = (
     ws_start_bypass,
     ws_stop_bypass,
     ws_set_temperature,
-    ws_set_weekly_schedule,
+    ws_assign_profile,
     ws_set_enabled,
     ws_create_profile,
     ws_update_profile,

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4
+
+- **Rimossa** la pianificazione “un profilo per giorno per termostato” introdotta in 0.3.3 (`weekly_schedules`, API `weekly/set` e relativa UI).
+- **Gestione profili condivisi** dalla card: crea, modifica, duplica ed elimina profili globali (storage integrazione); aggiornamenti visibili subito su tutte le card tramite evento `ha_thermo_profiles_changed` e `get_config`.
+- **Modalità automatica / manuale**: in automatico il profilo scelto viene **assegnato** (`profile/assign`); in manuale si **blocca** l’override (`set_profile`).
+- **Eliminazione profili**: i profili predefiniti (Comfort, Eco, …) non sono eliminabili; per i profili custom i termostati che li usavano passano al profilo di fallback (di default Comfort).
+
 ## 0.3.3
 
 - **Fix critico Lovelace**: corretti i percorsi dei bundle in `CARD_FILES` (erano `www/...` rispetto alla cartella `www`, quindi i file non venivano serviti su `/ha_thermo/…` e le risorse andavano in 404).

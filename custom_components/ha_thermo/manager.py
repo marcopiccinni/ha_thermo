@@ -36,8 +36,9 @@ from .const import (
     EVENT_MANUAL_OVERRIDE,
     EVENT_PROFILE_CHANGED,
     EVENT_TARGET_CHANGED,
-    EVENT_WEEKLY_CHANGED,
+    EVENT_PROFILES_CHANGED,
     DAYS,
+    DEFAULT_PROFILE_IDS,
     PROFILE_AUTO,
     STORAGE_KEY,
     STORAGE_VERSION,
@@ -63,7 +64,6 @@ class ThermoManager:
         self.active_profiles: dict[str, str] = {}
         self.pinned_profiles: dict[str, dict[str, Any]] = {}
         self.manual_overrides: dict[str, dict[str, Any]] = {}
-        self.weekly_schedules: dict[str, dict[str, str]] = {}
         self.disabled_zones: set[str] = set()
         self.effective_targets: dict[str, float | None] = {}
         self._desired: dict[str, float] = {}
@@ -78,6 +78,7 @@ class ThermoManager:
         raw = await self._store.async_load() or {}
         self._restore(raw)
         self._sync_zones()
+        self._migrate_legacy_weekly_schedules(raw)
         self._save()
 
     def _restore(self, raw: dict[str, Any]) -> None:
@@ -141,22 +142,6 @@ class ThermoManager:
                 _LOGGER.warning("Ignoring invalid bypass: %s", item)
         self.bypasses = bypasses
 
-        weekly: dict[str, dict[str, str]] = {}
-        for zone_id, schedule in (raw.get("weekly_schedules") or {}).items():
-            if not isinstance(schedule, dict):
-                continue
-            normalized: dict[str, str] = {}
-            for day, profile_id in schedule.items():
-                day_key = str(day)
-                if day_key not in DAYS:
-                    continue
-                pid = str(profile_id)
-                if pid in self.profiles:
-                    normalized[day_key] = pid
-            if normalized:
-                weekly[str(zone_id)] = normalized
-        self.weekly_schedules = weekly
-
         zones: dict[str, Zone] = {}
         for item in (raw.get("zones") or []):
             if not isinstance(item, dict):
@@ -204,7 +189,6 @@ class ThermoManager:
                 self.active_profiles.pop(zone_id, None)
                 self.pinned_profiles.pop(zone_id, None)
                 self.manual_overrides.pop(zone_id, None)
-                self.weekly_schedules.pop(zone_id, None)
                 self.disabled_zones.discard(zone_id)
         for zone_id, zone in current.items():
             if zone_id not in self.zones:
@@ -226,10 +210,6 @@ class ThermoManager:
             "profiles": [p.to_dict() for p in self.profiles.values()],
             "bypasses": [b.to_dict() for b in self.bypasses.values()],
             "active_profiles": dict(self.active_profiles),
-            "weekly_schedules": {
-                zone_id: dict(schedule)
-                for zone_id, schedule in self.weekly_schedules.items()
-            },
             "pinned_profiles": self._serialize_pins(),
             "manual_overrides": self._serialize_overrides(),
         }
@@ -288,11 +268,6 @@ class ThermoManager:
                 if not isinstance(until, datetime) or until > now:
                     return profile_id
                 self.pinned_profiles.pop(zone_id, None)
-        schedule = self.weekly_schedules.get(zone_id, {})
-        day = _day_key(now)
-        scheduled = schedule.get(day)
-        if scheduled in self.profiles:
-            return scheduled
         active = self.active_profiles.get(zone_id)
         if active in self.profiles:
             return active
@@ -498,8 +473,65 @@ class ThermoManager:
         self.hass.bus.async_fire(event_type, data)
 
     def _notify(self) -> None:
-        """Notify listeners."""
+        """Notify listeners (storage saved; cards refresh via WS/events)."""
         pass
+
+    def _fire_profiles_changed(self) -> None:
+        self._fire(EVENT_PROFILES_CHANGED, {})
+
+    def _migrate_legacy_weekly_schedules(self, raw: dict[str, Any]) -> None:
+        """Import one-shot assignment from removed 0.3.3 weekly_schedules storage."""
+        legacy = raw.get("weekly_schedules")
+        if not isinstance(legacy, dict) or not legacy:
+            return
+        now = dt_util.now()
+        day = _day_key(now)
+        migrated = False
+        for zone_id, schedule in legacy.items():
+            if not isinstance(schedule, dict):
+                continue
+            zone_key = str(zone_id)
+            if zone_key not in self.zones:
+                continue
+            profile_id = schedule.get(day) or next(iter(schedule.values()), None)
+            if not profile_id or str(profile_id) not in self.profiles:
+                continue
+            if zone_key in self.pinned_profiles:
+                continue
+            self.active_profiles[zone_key] = str(profile_id)
+            migrated = True
+        if migrated:
+            _LOGGER.info(
+                "Migrated legacy weekly_schedules to active_profiles (0.3.3 → 0.3.4)"
+            )
+
+    async def async_assign_profile(
+        self,
+        profile_id: str,
+        zones: list[str] | None = None,
+    ) -> None:
+        """Assign a shared profile for automatic mode (does not pin / manual override)."""
+        if profile_id not in self.profiles:
+            raise ValueError("unknown_profile")
+        zone_ids = self._resolve_zone_ids(zones)
+        profile = self.profiles[profile_id]
+        for z in self.zones.values():
+            profile.ensure_zone(z.id, z.default_temp)
+        for zone_id in zone_ids:
+            self.active_profiles[zone_id] = profile_id
+            self._applied_mode.pop(zone_id, None)
+            if not self.is_pinned(zone_id):
+                self._fire(
+                    EVENT_PROFILE_CHANGED,
+                    {
+                        ATTR_ZONE_ID: zone_id,
+                        ATTR_PROFILE_ID: profile_id,
+                        ATTR_PROFILE_NAME: profile.name,
+                        ATTR_SOURCE: "assign",
+                    },
+                )
+        self._save()
+        self._notify()
 
     async def async_set_profile(
         self,
@@ -537,36 +569,6 @@ class ThermoManager:
             )
         self._save()
         self._notify()
-
-    async def async_set_weekly_schedule(
-        self, zone_id: str, schedule: dict[str, str]
-    ) -> dict[str, str]:
-        """Set per-day profile mapping for automatic mode."""
-        if zone_id not in self.zones:
-            raise ValueError("unknown_zone")
-        normalized: dict[str, str] = {}
-        for day, profile_id in schedule.items():
-            day_key = str(day)
-            if day_key not in DAYS:
-                continue
-            pid = str(profile_id or "").strip()
-            if not pid or pid == PROFILE_AUTO:
-                continue
-            if pid not in self.profiles:
-                raise ValueError("unknown_profile")
-            normalized[day_key] = pid
-        if normalized:
-            self.weekly_schedules[zone_id] = normalized
-        else:
-            self.weekly_schedules.pop(zone_id, None)
-        if not self.is_pinned(zone_id):
-            resolved = self._resolve_profile(zone_id, dt_util.now())
-            if resolved:
-                self.active_profiles[zone_id] = resolved
-        self._save()
-        self._fire(EVENT_WEEKLY_CHANGED, {ATTR_ZONE_ID: zone_id})
-        self._notify()
-        return dict(self.weekly_schedules.get(zone_id, {}))
 
     async def async_start_bypass(
         self,
@@ -681,9 +683,11 @@ class ThermoManager:
         profile = Profile.from_dict(profile_dict)
         if profile.id in self.profiles:
             raise ValueError("profile_exists")
+        for zone in self.zones.values():
+            profile.ensure_zone(zone.id, zone.default_temp)
         self.profiles[profile.id] = profile
         self._save()
-        self._notify()
+        self._fire_profiles_changed()
         return profile
 
     async def async_update_profile(self, profile_dict: dict[str, Any]) -> Profile:
@@ -691,29 +695,48 @@ class ThermoManager:
         profile = Profile.from_dict(profile_dict)
         if profile.id not in self.profiles:
             raise ValueError("unknown_profile")
+        for zone in self.zones.values():
+            profile.ensure_zone(zone.id, zone.default_temp)
         self.profiles[profile.id] = profile
         self._save()
-        self._notify()
+        self._fire_profiles_changed()
         return profile
 
-    async def async_delete_profile(self, profile_id: str) -> None:
-        """Delete a profile."""
+    async def async_delete_profile(self, profile_id: str) -> dict[str, Any]:
+        """Delete a profile, reassigning zones that were using it."""
         if profile_id not in self.profiles:
             raise ValueError("unknown_profile")
+        if profile_id in DEFAULT_PROFILE_IDS:
+            raise ValueError("profile_default_protected")
+        if len(self.profiles) <= 1:
+            raise ValueError("profile_last_one")
+        fallback = self._default_profile_id()
+        if fallback == profile_id:
+            fallback = next(
+                (pid for pid in self.profiles if pid != profile_id),
+                None,
+            )
+        if not fallback:
+            raise ValueError("profile_last_one")
+        affected: list[str] = []
         self.profiles.pop(profile_id)
         for zone_id, pin in list(self.pinned_profiles.items()):
             if pin.get("profile_id") == profile_id:
                 self.pinned_profiles.pop(zone_id, None)
-        default = self._default_profile_id()
+                affected.append(zone_id)
         for zone_id in self.zones:
             if self.active_profiles.get(zone_id) == profile_id:
-                if default:
-                    self.active_profiles[zone_id] = default
-                else:
-                    self.active_profiles.pop(zone_id, None)
+                self.active_profiles[zone_id] = fallback
                 self._applied_mode.pop(zone_id, None)
+                if zone_id not in affected:
+                    affected.append(zone_id)
         self._save()
-        self._notify()
+        self._fire_profiles_changed()
+        return {
+            "deleted": profile_id,
+            "fallback_profile": fallback,
+            "affected_zones": affected,
+        }
 
     async def async_clone_profile(
         self, source_id: str, name: str, zones: list[str] | None = None
@@ -741,9 +764,11 @@ class ThermoManager:
             new_profile.days = {
                 zid: list(source.days.get(zid, [])) for zid in zone_ids
             }
+        for zone in self.zones.values():
+            new_profile.ensure_zone(zone.id, zone.default_temp)
         self.profiles[new_id] = new_profile
         self._save()
-        self._notify()
+        self._fire_profiles_changed()
         return new_profile
 
     async def async_reload(self) -> None:
@@ -846,20 +871,15 @@ class ThermoManager:
     def profile_source(self, zone_id: str) -> str:
         """Describe how the active profile is chosen."""
         if self.is_pinned(zone_id):
-            return "pinned"
+            return "manual"
+        if self.bypass_for_zone(zone_id) is not None:
+            return "bypass"
         if self.is_override_active(zone_id):
             return "override"
-        schedule = self.weekly_schedules.get(zone_id, {})
-        if schedule.get(_day_key(dt_util.now())):
-            return "weekly"
-        return "profile"
+        return "automatic"
 
     def weekly_profile_today(self, zone_id: str) -> str | None:
-        """Profile scheduled for today (automatic mode)."""
-        schedule = self.weekly_schedules.get(zone_id, {})
-        profile_id = schedule.get(_day_key(dt_util.now()))
-        if profile_id in self.profiles:
-            return self.profiles[profile_id].name
+        """Active assigned profile name (kept for entity attribute compatibility)."""
         return self.active_profile_name(zone_id)
 
     def bypass_for_zone(self, zone_id: str) -> Bypass | None:
@@ -913,10 +933,6 @@ class ThermoManager:
                 if bypass.until > now
             ],
             "active_profiles": dict(self.active_profiles),
-            "weekly_schedules": {
-                zone_id: dict(schedule)
-                for zone_id, schedule in self.weekly_schedules.items()
-            },
             "pinned_profiles": {
                 zone_id: pin.get("profile_id")
                 for zone_id, pin in self.pinned_profiles.items()

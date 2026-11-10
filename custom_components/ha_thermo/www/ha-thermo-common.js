@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.3.3";
+export const INTEGRATION_VERSION = "0.3.4";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -8,8 +8,9 @@ export const EVENT_TYPES = [
   `${DOMAIN}_manual_override`,
   `${DOMAIN}_profile_override_started`,
   `${DOMAIN}_profile_override_ended`,
-  `${DOMAIN}_weekly_changed`,
+  `${DOMAIN}_profiles_changed`,
 ];
+export const WEEK_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 export const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 export const DAY_LABELS = { mon: "Lun", tue: "Mar", wed: "Mer", thu: "Gio", fri: "Ven", sat: "Sab", sun: "Dom" };
 
@@ -137,4 +138,44 @@ export const renderChart = (zone, profile, data, opts = {}) => {
 
 export const callWS = async (hass, msg) => {
   return await hass.callWS(msg);
+};
+
+export const slugProfileId = (name) =>
+  String(name || "profilo")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 48) || "profilo";
+
+export const flattenProfileZoneTemperature = (profile, zoneId, temperature) => {
+  const temp = Number(temperature);
+  const next = JSON.parse(JSON.stringify(profile));
+  next.targets = { ...(next.targets || {}), [zoneId]: temp };
+  next.curves = { ...(next.curves || {}) };
+  const dayCurves = {};
+  for (const day of WEEK_DAYS) {
+    dayCurves[day] = Array.from({ length: 24 }, () => temp);
+  }
+  next.curves[zoneId] = dayCurves;
+  next.days = { ...(next.days || {}), [zoneId]: [...WEEK_DAYS] };
+  return next;
+};
+
+export const newProfileDraft = (name, zoneId, temperature = 20) => {
+  const id = slugProfileId(name);
+  return flattenProfileZoneTemperature(
+    { id, name, icon: "mdi:home-thermometer", targets: {}, curves: {}, days: {} },
+    zoneId,
+    temperature,
+  );
+};
+
+export const profileZoneTemperature = (profile, zoneId, fallback = 20) => {
+  const target = profile?.targets?.[zoneId];
+  if (target != null && !Number.isNaN(Number(target))) return Number(target);
+  const day = todayKey();
+  const curve = profile?.curves?.[zoneId]?.[day];
+  if (Array.isArray(curve) && curve.length) return Number(curve[0]);
+  return fallback;
 };

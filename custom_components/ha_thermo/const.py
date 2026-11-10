@@ -51,7 +51,12 @@ EVENT_BYPASS_STARTED: Final = f"{DOMAIN}_bypass_started"
 EVENT_BYPASS_ENDED: Final = f"{DOMAIN}_bypass_ended"
 EVENT_TARGET_CHANGED: Final = f"{DOMAIN}_target_changed"
 EVENT_MANUAL_OVERRIDE: Final = f"{DOMAIN}_manual_override"
-EVENT_WEEKLY_CHANGED: Final = f"{DOMAIN}_weekly_changed"
+EVENT_PROFILES_CHANGED: Final = f"{DOMAIN}_profiles_changed"
+
+# Built-in profiles that cannot be deleted from the UI
+DEFAULT_PROFILE_IDS: Final = frozenset(
+    {"comfort", "eco", "night", "away", "summer"}
+)
 
 # Services
 SERVICE_SET_PROFILE: Final = "set_profile"

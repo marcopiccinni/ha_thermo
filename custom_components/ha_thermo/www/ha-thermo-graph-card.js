@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, esc, formatTemp, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.3.3";
+import { DOMAIN, EVENT_TYPES, esc, formatTemp, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.3.4";
 
 class HaThermoGraphCard extends HTMLElement {
   constructor() {
