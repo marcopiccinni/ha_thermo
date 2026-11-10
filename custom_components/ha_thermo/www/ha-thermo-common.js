@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.3.6";
+export const INTEGRATION_VERSION = "0.3.7";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -165,4 +165,202 @@ export const profileAverageTemp = (profile, fallback = 20) => {
   if (!Array.isArray(profile?.hourly) || !profile.hourly.length) return fallback;
   const sum = profile.hourly.reduce((a, b) => a + Number(b), 0);
   return Math.round((sum / profile.hourly.length) * 10) / 10;
+};
+
+export const GRAPH_TIME_RANGES = [
+  { key: "6h", hours: 6, label: "6 ore" },
+  { key: "12h", hours: 12, label: "12 ore" },
+  { key: "24h", hours: 24, label: "24 ore" },
+  { key: "48h", hours: 48, label: "48 ore" },
+  { key: "7d", hours: 168, label: "7 giorni" },
+];
+
+export const graphHoursToShow = (config = {}) => {
+  const h = Number(config.hours_to_show);
+  if (h > 0 && h <= 168) return h;
+  const preset = GRAPH_TIME_RANGES.find((r) => r.key === config.time_range);
+  return preset?.hours ?? 24;
+};
+
+export const parseRoomSensorList = (value) => {
+  if (Array.isArray(value)) return value.map((v) => String(v).trim()).filter((v) => v.startsWith("sensor."));
+  if (value == null || value === "") return [];
+  return String(value)
+  .split(/[,;\s]+/)
+  .map((s) => s.trim())
+  .filter((s) => s.startsWith("sensor."));
+};
+
+const _tsFromState = (state) => {
+  if (!state) return null;
+  if (state.last_changed) return new Date(state.last_changed).getTime();
+  if (state.last_updated) return new Date(state.last_updated).getTime();
+  if (state.lu != null) return Number(state.lu) * 1000;
+  if (state.lc != null) return Number(state.lc) * 1000;
+  return null;
+};
+
+export const normalizeHistoryStates = (states) => {
+  if (!Array.isArray(states)) return [];
+  return states.map((raw) => {
+    if (raw.last_changed || raw.last_updated) return raw;
+    const lu = raw.lu != null ? Number(raw.lu) * 1000 : null;
+    const lc = raw.lc != null ? Number(raw.lc) * 1000 : lu;
+    return {
+      state: raw.s ?? raw.state,
+      last_changed: lc ? new Date(lc).toISOString() : undefined,
+      last_updated: lu ? new Date(lu).toISOString() : undefined,
+      attributes: raw.a ?? raw.attributes ?? {},
+    };
+  });
+};
+
+/** @param {unknown} raw @param {string[]} entityIds */
+export const historyByEntity = (raw, entityIds = []) => {
+  const out = {};
+  if (!raw) return out;
+  if (Array.isArray(raw)) {
+    if (raw.length && (raw[0]?.entity_id || raw[0]?.e)) {
+      for (const block of raw) {
+        const id = block.entity_id || block.e;
+        if (id) out[id] = normalizeHistoryStates(block.states || block.s || []);
+      }
+      return out;
+    }
+    if (entityIds.length === raw.length) {
+      entityIds.forEach((id, i) => {
+        out[id] = normalizeHistoryStates(raw[i]);
+      });
+      return out;
+    }
+    if (entityIds.length === 1) {
+      out[entityIds[0]] = normalizeHistoryStates(raw);
+    }
+    return out;
+  }
+  if (typeof raw === "object") {
+    for (const [id, states] of Object.entries(raw)) {
+      out[id] = normalizeHistoryStates(states);
+    }
+  }
+  return out;
+};
+
+export const climateSetpointFromState = (state) => {
+  const a = state?.attributes || {};
+  if (a.temperature != null && !Number.isNaN(Number(a.temperature))) return Number(a.temperature);
+  const low = a.target_temp_low;
+  const high = a.target_temp_high;
+  if (low != null && high != null && !Number.isNaN(Number(low)) && !Number.isNaN(Number(high))) {
+    return (Number(low) + Number(high)) / 2;
+  }
+  if (low != null && !Number.isNaN(Number(low))) return Number(low);
+  if (high != null && !Number.isNaN(Number(high))) return Number(high);
+  const n = parseFloat(state?.state);
+  if (!Number.isNaN(n) && String(state?.state).match(/^\d/)) return n;
+  return NaN;
+};
+
+export const climateCurrentFromState = (state) => {
+  const a = state?.attributes || {};
+  if (a.current_temperature != null && !Number.isNaN(Number(a.current_temperature))) {
+    return Number(a.current_temperature);
+  }
+  return NaN;
+};
+
+export const sensorTempFromState = (state) => {
+  const n = parseFloat(state?.state);
+  if (Number.isNaN(n) || state?.state === "unavailable" || state?.state === "unknown") return NaN;
+  return n;
+};
+
+const _historyPoints = (states, valueFn) => {
+  const points = [];
+  for (const s of states || []) {
+    const y = valueFn(s);
+    const x = _tsFromState(s);
+    if (x == null || Number.isNaN(y)) continue;
+    points.push({ x, y });
+  }
+  return points;
+};
+
+export const historySetpointPoints = (states) => _historyPoints(states, climateSetpointFromState);
+export const historyClimateCurrentPoints = (states) => _historyPoints(states, climateCurrentFromState);
+export const historySensorPoints = (states) => _historyPoints(states, sensorTempFromState);
+
+export const yDomainPadded = (values, minOverride, maxOverride, minSpan = 1.5) => {
+  const nums = values.filter((v) => v != null && !Number.isNaN(v));
+  if (!nums.length) return { min: 18, max: 24 };
+  let min = minOverride != null ? Number(minOverride) : Math.min(...nums);
+  let max = maxOverride != null ? Number(maxOverride) : Math.max(...nums);
+  if (minOverride == null && maxOverride == null) {
+    if (max - min < minSpan) {
+      const mid = (min + max) / 2;
+      min = mid - minSpan / 2;
+      max = mid + minSpan / 2;
+    }
+    const pad = Math.max(0.4, (max - min) * 0.1);
+    min -= pad;
+    max += pad;
+  }
+  return { min, max };
+};
+
+export const stepLinePath = (points, xScale, yScale, rangeStart, rangeEnd) => {
+  if (!points?.length) return "";
+  const sorted = [...points].sort((a, b) => a.x - b.x);
+  let idx = 0;
+  while (idx < sorted.length - 1 && sorted[idx + 1].x <= rangeStart) idx += 1;
+  let y = sorted[idx].y;
+  let x = rangeStart;
+  const parts = [`M ${xScale(x).toFixed(2)} ${yScale(y).toFixed(2)}`];
+  for (let i = idx; i < sorted.length; i += 1) {
+    const p = sorted[i];
+    if (p.x > rangeEnd) break;
+    const px = Math.max(p.x, rangeStart);
+    if (px > x) {
+      parts.push(`L ${xScale(px).toFixed(2)} ${yScale(y).toFixed(2)}`);
+      x = px;
+    }
+    if (p.y !== y) {
+      parts.push(`L ${xScale(x).toFixed(2)} ${yScale(p.y).toFixed(2)}`);
+      y = p.y;
+    }
+  }
+  parts.push(`L ${xScale(rangeEnd).toFixed(2)} ${yScale(y).toFixed(2)}`);
+  return parts.join(" ");
+};
+
+export const linePath = (points, xScale, yScale, rangeStart, rangeEnd) => {
+  const inRange = (points || [])
+    .filter((p) => p.x >= rangeStart && p.x <= rangeEnd)
+    .sort((a, b) => a.x - b.x);
+  if (!inRange.length) return "";
+  return inRange.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x).toFixed(2)} ${yScale(p.y).toFixed(2)}`).join(" ");
+};
+
+/** Today's scheduled hourly profile mapped onto the time axis (step segments). */
+export const profileSchedulePoints = (hourly, rangeStart, rangeEnd) => {
+  if (!Array.isArray(hourly) || hourly.length < 24) return [];
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+  const points = [];
+  for (let h = 0; h < 24; h += 1) {
+    const x = dayStart.getTime() + h * 3600000;
+    if (x > rangeEnd) break;
+    if (x + 3600000 < rangeStart) continue;
+    const y = Number(hourly[h]);
+    if (!Number.isNaN(y)) points.push({ x, y });
+  }
+  return points;
+};
+
+export const formatChartTime = (ms, spanHours) => {
+  const d = new Date(ms);
+  if (spanHours > 48) {
+    return d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 };

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.7
+
+- **Card grafico**: storico reale dal **recorder** di Home Assistant (`history/history_during_period` con attributi), non più parsing errato di `state` sul climate (modalità HVAC → serie vuota) né risposta history indicizzata con `[0]`.
+- **Setpoint a gradino** da attributi `temperature` / `target_temp_low`–`high`; **ambiente** da `current_temperature` o da **sensori `sensor.*` configurabili** (uno o più, virgola nell’editor).
+- **Profilo di oggi** opzionale in tratteggio; asse Y con padding automatico; intervalli **6h / 12h / 24h / 48h / 7d**; tooltip; aggiornamento live su `state_changed` e eventi integrazione.
+- **Editor visuale**: termostato/zona, sensori ambiente, intervallo, colori, overlay profilo.
+
 ## 0.3.6
 
 - **Card controllo semplificata**: rimossi pulsanti *Bypass 60 min* e *Disattiva controllo* (servizi, entità `switch`/`binary_sensor` bypass e `ha_thermo.start_bypass` restano disponibili per automazioni).

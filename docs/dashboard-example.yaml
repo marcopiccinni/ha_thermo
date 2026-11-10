@@ -21,10 +21,10 @@ views:
       # Card grafico dedicata
       - type: custom:ha-thermo-graph-card
         title: Grafico Studio
-        zone: climate.studio
+        zone: studio
+        time_range: 24h
         height: 200
-        show_profile: true
-        show_next: true
+        show_profile_overlay: true
 
       # Manager globale
       - type: custom:ha-thermo-manager-card

@@ -11,7 +11,7 @@ import {
   renderChart,
   callWS,
   todayKey,
-} from "./ha-thermo-common.js?v=0.3.6";
+} from "./ha-thermo-common.js?v=0.3.7";
 
 class HaThermoCard extends HTMLElement {
   constructor() {

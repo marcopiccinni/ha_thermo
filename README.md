@@ -64,30 +64,36 @@ Profili condivisi (curve 24h): **Impostazioni → Dispositivi e servizi → HA T
 
 ### Grafico (`ha-thermo-graph-card`)
 
-Card con storico temperature da Home Assistant.
+Storico dal **recorder** HA: setpoint del termostato (attributi climate) e temperatura ambiente (`current_temperature` o sensori dedicati). Opzionale sovrapposizione del profilo assegnato a oggi.
 
 ```yaml
 type: custom:ha-thermo-graph-card
 title: Studio
-zone: climate.studio
-hours_to_show: 24
-height: 180
-min_temp:
-max_temp:
+zone: studio
+time_range: 24h
+room_sensors:
+  - sensor.temperatura_sala
+height: 200
 show_current: true
 show_target: true
+show_profile_overlay: true
+color_current: var(--primary-color)
+color_target: "#ff9800"
+color_profile: "#4caf50"
 ```
 
 | Opzione | Default | Descrizione |
 | --- | --- | --- |
 | `title` | `Grafico` | Titolo della card. |
-| `zone` | — | Entità `climate` della zona. |
-| `hours_to_show` | `24` | Ore di storico (1-168). |
-| `height` | `180` | Altezza grafico in px. |
-| `min_temp` | auto | Minimo Y (vuoto = auto). |
-| `max_temp` | auto | Massimo Y (vuoto = auto). |
-| `show_current` | `true` | Mostra linea temperatura attuale. |
-| `show_target` | `true` | Mostra linea target. |
+| `zone` / `climate_entity` | — | Zona HA Thermo o entità `climate`. |
+| `room_sensors` | `[]` | Sensori `sensor.*` (ambiente); se vuoto usa `current_temperature` del climate o il sensore configurato in zona. |
+| `time_range` | `24h` | `6h`, `12h`, `24h`, `48h`, `7d` (oppure `hours_to_show` 1–168). |
+| `height` | `200` | Altezza grafico in px. |
+| `min_temp` / `max_temp` | auto | Limiti Y (vuoto = auto con margine). |
+| `show_current` | `true` | Temperatura ambiente (linea). |
+| `show_target` | `true` | Setpoint storico (linea a gradino). |
+| `show_profile_overlay` | `true` | Curva profilo di oggi (tratteggio). |
+| `color_*` | tema | Colori ambiente, setpoint, profilo. |
 
 ## Logica di controllo
 
