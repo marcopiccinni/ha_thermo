@@ -1,4 +1,4 @@
-import { DOMAIN, EVENT_TYPES, esc, formatTemp, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.3.1";
+import { DOMAIN, EVENT_TYPES, esc, formatTemp, findZone, getZoneOptions, callWS } from "./ha-thermo-common.js?v=0.3.3";
 
 class HaThermoGraphCard extends HTMLElement {
   constructor() {
@@ -132,3 +132,14 @@ class HaThermoGraphCardEditor extends HTMLElement {
 
 if (!customElements.get("ha-thermo-graph-card")) customElements.define("ha-thermo-graph-card", HaThermoGraphCard);
 if (!customElements.get("ha-thermo-graph-card-editor")) customElements.define("ha-thermo-graph-card-editor", HaThermoGraphCardEditor);
+
+window.customCards = window.customCards || [];
+if (!window.customCards.some((c) => c.type === "ha-thermo-graph-card")) {
+  window.customCards.push({
+    type: "ha-thermo-graph-card",
+    name: "HA Thermo Grafico",
+    description: "Storico e andamento temperature/setpoint del termostato HA Thermo.",
+    preview: true,
+    documentationURL: "https://github.com/marcopiccinni/ha_thermo",
+  });
+}

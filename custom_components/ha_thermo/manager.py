@@ -36,9 +36,12 @@ from .const import (
     EVENT_MANUAL_OVERRIDE,
     EVENT_PROFILE_CHANGED,
     EVENT_TARGET_CHANGED,
+    EVENT_WEEKLY_CHANGED,
+    DAYS,
     PROFILE_AUTO,
     STORAGE_KEY,
     STORAGE_VERSION,
+    VERSION,
     entity_unique_id,
 )
 from .models import Bypass, Profile, Zone, slugify
@@ -60,6 +63,7 @@ class ThermoManager:
         self.active_profiles: dict[str, str] = {}
         self.pinned_profiles: dict[str, dict[str, Any]] = {}
         self.manual_overrides: dict[str, dict[str, Any]] = {}
+        self.weekly_schedules: dict[str, dict[str, str]] = {}
         self.disabled_zones: set[str] = set()
         self.effective_targets: dict[str, float | None] = {}
         self._desired: dict[str, float] = {}
@@ -137,6 +141,22 @@ class ThermoManager:
                 _LOGGER.warning("Ignoring invalid bypass: %s", item)
         self.bypasses = bypasses
 
+        weekly: dict[str, dict[str, str]] = {}
+        for zone_id, schedule in (raw.get("weekly_schedules") or {}).items():
+            if not isinstance(schedule, dict):
+                continue
+            normalized: dict[str, str] = {}
+            for day, profile_id in schedule.items():
+                day_key = str(day)
+                if day_key not in DAYS:
+                    continue
+                pid = str(profile_id)
+                if pid in self.profiles:
+                    normalized[day_key] = pid
+            if normalized:
+                weekly[str(zone_id)] = normalized
+        self.weekly_schedules = weekly
+
         zones: dict[str, Zone] = {}
         for item in (raw.get("zones") or []):
             if not isinstance(item, dict):
@@ -184,6 +204,7 @@ class ThermoManager:
                 self.active_profiles.pop(zone_id, None)
                 self.pinned_profiles.pop(zone_id, None)
                 self.manual_overrides.pop(zone_id, None)
+                self.weekly_schedules.pop(zone_id, None)
                 self.disabled_zones.discard(zone_id)
         for zone_id, zone in current.items():
             if zone_id not in self.zones:
@@ -205,6 +226,10 @@ class ThermoManager:
             "profiles": [p.to_dict() for p in self.profiles.values()],
             "bypasses": [b.to_dict() for b in self.bypasses.values()],
             "active_profiles": dict(self.active_profiles),
+            "weekly_schedules": {
+                zone_id: dict(schedule)
+                for zone_id, schedule in self.weekly_schedules.items()
+            },
             "pinned_profiles": self._serialize_pins(),
             "manual_overrides": self._serialize_overrides(),
         }
@@ -263,6 +288,11 @@ class ThermoManager:
                 if not isinstance(until, datetime) or until > now:
                     return profile_id
                 self.pinned_profiles.pop(zone_id, None)
+        schedule = self.weekly_schedules.get(zone_id, {})
+        day = _day_key(now)
+        scheduled = schedule.get(day)
+        if scheduled in self.profiles:
+            return scheduled
         active = self.active_profiles.get(zone_id)
         if active in self.profiles:
             return active
@@ -507,6 +537,36 @@ class ThermoManager:
             )
         self._save()
         self._notify()
+
+    async def async_set_weekly_schedule(
+        self, zone_id: str, schedule: dict[str, str]
+    ) -> dict[str, str]:
+        """Set per-day profile mapping for automatic mode."""
+        if zone_id not in self.zones:
+            raise ValueError("unknown_zone")
+        normalized: dict[str, str] = {}
+        for day, profile_id in schedule.items():
+            day_key = str(day)
+            if day_key not in DAYS:
+                continue
+            pid = str(profile_id or "").strip()
+            if not pid or pid == PROFILE_AUTO:
+                continue
+            if pid not in self.profiles:
+                raise ValueError("unknown_profile")
+            normalized[day_key] = pid
+        if normalized:
+            self.weekly_schedules[zone_id] = normalized
+        else:
+            self.weekly_schedules.pop(zone_id, None)
+        if not self.is_pinned(zone_id):
+            resolved = self._resolve_profile(zone_id, dt_util.now())
+            if resolved:
+                self.active_profiles[zone_id] = resolved
+        self._save()
+        self._fire(EVENT_WEEKLY_CHANGED, {ATTR_ZONE_ID: zone_id})
+        self._notify()
+        return dict(self.weekly_schedules.get(zone_id, {}))
 
     async def async_start_bypass(
         self,
@@ -783,6 +843,25 @@ class ThermoManager:
         """Check if zone has pinned profile."""
         return zone_id in self.pinned_profiles
 
+    def profile_source(self, zone_id: str) -> str:
+        """Describe how the active profile is chosen."""
+        if self.is_pinned(zone_id):
+            return "pinned"
+        if self.is_override_active(zone_id):
+            return "override"
+        schedule = self.weekly_schedules.get(zone_id, {})
+        if schedule.get(_day_key(dt_util.now())):
+            return "weekly"
+        return "profile"
+
+    def weekly_profile_today(self, zone_id: str) -> str | None:
+        """Profile scheduled for today (automatic mode)."""
+        schedule = self.weekly_schedules.get(zone_id, {})
+        profile_id = schedule.get(_day_key(dt_util.now()))
+        if profile_id in self.profiles:
+            return self.profiles[profile_id].name
+        return self.active_profile_name(zone_id)
+
     def bypass_for_zone(self, zone_id: str) -> Bypass | None:
         """Get active bypass for zone."""
         return active_bypass(self.bypasses.values(), zone_id, dt_util.now())
@@ -816,7 +895,7 @@ class ThermoManager:
         from homeassistant.util import dt as dt_util
         now = dt_util.now()
         return {
-            "version": "0.3.0",
+            "version": VERSION,
             "entry_id": self._entry_id,
             "enabled": self.enabled,
             "disabled_zones": sorted(self.disabled_zones),
@@ -834,6 +913,10 @@ class ThermoManager:
                 if bypass.until > now
             ],
             "active_profiles": dict(self.active_profiles),
+            "weekly_schedules": {
+                zone_id: dict(schedule)
+                for zone_id, schedule in self.weekly_schedules.items()
+            },
             "pinned_profiles": {
                 zone_id: pin.get("profile_id")
                 for zone_id, pin in self.pinned_profiles.items()

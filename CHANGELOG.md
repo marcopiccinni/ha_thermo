@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3
+
+- **Fix critico Lovelace**: corretti i percorsi dei bundle in `CARD_FILES` (erano `www/...` rispetto alla cartella `www`, quindi i file non venivano serviti su `/ha_thermo/…` e le risorse andavano in 404).
+- **Registrazione frontend (HA 2026.x)**: nuovo modulo `frontend.py` con `async_register_static_paths` / fallback legacy, attesa caricamento risorse Lovelace, aggiornamento cache-bust `?v=` e fallback YAML tramite `add_extra_js_url`.
+- **Card picker**: aggiunta registrazione `window.customCards` per `ha-thermo-card` e `ha-thermo-graph-card` (nome, descrizione, anteprima, editor).
+- **Card controllo**: pianificazione settimanale per giorno (modalità automatica), distinzione manuale/automatico, fix slider ±0.5°C.
+- **Backend**: API WebSocket `ha_thermo/weekly/set` e persistenza `weekly_schedules`.
+
 ## 0.3.0
 
 Riscrittura completa per semplificare l'integrazione.

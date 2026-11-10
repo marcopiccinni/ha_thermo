@@ -1,4 +1,16 @@
-import { DOMAIN, EVENT_TYPES, esc, round, formatTemp, formatTime, formatRemaining, findZone, getZoneOptions, renderChart, callWS } from "./ha-thermo-common.js?v=0.3.1";
+import {
+  DOMAIN,
+  EVENT_TYPES,
+  DAY_KEYS,
+  DAY_LABELS,
+  esc,
+  formatTemp,
+  formatRemaining,
+  findZone,
+  getZoneOptions,
+  renderChart,
+  callWS,
+} from "./ha-thermo-common.js?v=0.3.3";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -26,7 +38,19 @@ class HaThermoCard extends HTMLElement {
 
   setConfig(config) {
     if (!config) throw new Error("Configurazione non valida");
-    this._config = { title: "Termostati", show_graph: false, show_slider: true, show_profile: true, show_bypass: true, show_enable: true, show_status: true, bypass_minutes: 60, hold_minutes: 60, ...config };
+    this._config = {
+      title: "Termostati",
+      show_graph: false,
+      show_slider: true,
+      show_profile: true,
+      show_weekly: true,
+      show_bypass: true,
+      show_enable: true,
+      show_status: true,
+      bypass_minutes: 60,
+      hold_minutes: 60,
+      ...config,
+    };
     this._render();
   }
 
@@ -89,17 +113,39 @@ class HaThermoCard extends HTMLElement {
     return (this._data?.profiles || []).find((p) => p.id === id);
   }
 
+  _profileOptions(profiles, selected) {
+    return [
+      `<option value="__auto__" ${selected === "__auto__" ? "selected" : ""}>Auto (pianificazione)</option>`,
+      ...profiles.map((p) => `<option value="${esc(p.id)}" ${selected === p.id ? "selected" : ""}>${esc(p.name)}</option>`),
+    ].join("");
+  }
+
+  _weeklyBlock(zone, profiles, disabled) {
+    if (!this._config.show_weekly || zone?.pinned) return "";
+    const schedule = this._data?.weekly_schedules?.[zone.id] || {};
+    const rows = DAY_KEYS.map((day) => {
+      const value = schedule[day] || "";
+      return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-action="weekly" data-day="${day}" data-zone="${esc(zone.id)}" ${disabled ? "disabled" : ""}>${this._profileOptions(profiles, value || "__auto__")}</select></label>`;
+    }).join("");
+    return `<details class="weekly" open><summary>Pianificazione settimanale (modalità automatica)</summary><div class="weekly-grid">${rows}</div></details>`;
+  }
+
   _render() {
     if (!this.shadowRoot) return;
     const zone = this._zone();
     const cfg = this._config;
     const disabled = !this._data || !zone || !zone.enabled;
     const profiles = this._data?.profiles || [];
-    const pinned = this._data?.pinned_profiles?.[zone?.id] || "__auto__";
-    const profileOptions = [`<option value="__auto__" ${pinned === "__auto__" ? "selected" : ""}>Auto</option>`, ...profiles.map((p) => `<option value="${esc(p.id)}" ${pinned === p.id ? "selected" : ""}>${esc(p.name)}</option>`)].join("");
+    const pinId = zone ? this._data?.pinned_profiles?.[zone.id] : null;
+    const profileValue = pinId || "__auto__";
+    const profileOptions = this._profileOptions(profiles, profileValue);
+    const modeLabel = zone?.pinned ? "Manuale" : "Automatico";
     const body = !this._data ? `<div class="empty">${this._error ? esc(this._error) : "Caricamento…"}</div>` : !zone ? `<div class="empty">Scegli il termostato con la matita</div>` : `
       <div class="head">
-        <div class="title">${esc(cfg.title || zone.name || "Termostato")}</div>
+        <div>
+          <div class="title">${esc(cfg.title || zone.name || "Termostato")}</div>
+          <div class="mode">${esc(modeLabel)} · ${zone.enabled ? "Controllo attivo" : "Controllo disattivato"}</div>
+        </div>
         <button class="icon-btn" data-action="settings" title="Impostazioni">⚙️</button>
       </div>
       ${cfg.show_graph !== false ? renderChart(zone, this._profile(zone), this._data, { show_target: true, show_current: true, height: 180 }) : ""}
@@ -119,7 +165,8 @@ class HaThermoCard extends HTMLElement {
           ${zone.bypass_active ? `<button class="danger" data-action="stop-bypass" data-zone="${esc(zone.id)}">Ferma</button>` : ""}
         </div>
         ` : ""}
-        ${cfg.show_enable ? `<button class="toggle ${zone.enabled ? "active" : ""}" data-action="enable" data-zone="${esc(zone.id)}">${zone.enabled ? "Auto" : "Off"}</button>` : ""}
+        ${cfg.show_enable ? `<button class="toggle ${zone.enabled ? "active" : ""}" data-action="enable" data-zone="${esc(zone.id)}">${zone.enabled ? "Disattiva controllo" : "Attiva controllo"}</button>` : ""}
+        ${this._weeklyBlock(zone, profiles, disabled)}
       </div>
       ${cfg.show_status ? `<div class="meta"><span>Profilo: ${esc(zone.active_profile_name || "--")}</span>${zone.bypass_active ? `<span>Bypass: ${formatRemaining(zone.bypass_remaining)}</span>` : ""}</div>` : ""}
     `;
@@ -128,6 +175,12 @@ class HaThermoCard extends HTMLElement {
       .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:var(--ha-card-border-radius,12px);border:var(--ha-card-border-width,1px) solid var(--ha-card-border-color,var(--divider-color,transparent));box-shadow:var(--ha-card-box-shadow,none);padding:16px}
       .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
       .title{font-weight:600;font-size:1.05rem}
+      .mode{font-size:0.8rem;color:var(--secondary-text-color);margin-top:2px}
+      .weekly{margin-top:8px;border-top:1px solid var(--divider-color);padding-top:8px}
+      .weekly summary{cursor:pointer;font-weight:500;margin-bottom:8px}
+      .weekly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+      .weekly-day{display:grid;gap:4px;font-size:0.8rem}
+      .weekly-day select{font-size:0.85rem}
       .icon-btn{background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--primary-text-color)}
       .controls{display:grid;gap:8px;margin:12px 0}
       .slider-row{display:flex;align-items:center;gap:8px}
@@ -154,7 +207,7 @@ class HaThermoCard extends HTMLElement {
     if (action === "up" || action === "down") {
       const slider = this.shadowRoot.querySelector("input[type=range]");
       if (!slider) return;
-      const step = parseFloat(step || "0.5");
+      const step = parseFloat(slider.step || "0.5");
       let val = parseFloat(slider.value);
       val += action === "up" ? step : -step;
       slider.value = val;
@@ -192,6 +245,15 @@ class HaThermoCard extends HTMLElement {
     const t = e.target;
     if (t.matches("select[data-action='profile']")) {
       this._call({ type: `${DOMAIN}/set_profile`, profile: t.value, zones: [t.dataset.zone] }, "Profilo impostato");
+      return;
+    }
+    if (t.matches("select[data-action='weekly']")) {
+      const zone = this._zone();
+      if (!zone) return;
+      const schedule = { ...(this._data?.weekly_schedules?.[zone.id] || {}) };
+      if (t.value === "__auto__") delete schedule[t.dataset.day];
+      else schedule[t.dataset.day] = t.value;
+      this._call({ type: `${DOMAIN}/weekly/set`, zone_id: zone.id, schedule }, "Pianificazione aggiornata");
     }
   }
 
@@ -203,7 +265,7 @@ class HaThermoCard extends HTMLElement {
 class HaThermoCardEditor extends HTMLElement {
   constructor() { super(); this.attachShadow({ mode: "open" }); this._config = {}; this._zones = []; this._loaded = false; }
   set hass(h) { this._hass = h; if (!this._loaded) { this._loaded = true; this._loadZones(); } }
-  setConfig(config) { this._config = { title: "Termostato", show_graph: false, show_slider: true, show_profile: true, show_bypass: true, show_enable: true, show_status: true, bypass_minutes: 60, hold_minutes: 60, ...config }; this._render(); }
+  setConfig(config) { this._config = { title: "Termostato", show_graph: false, show_slider: true, show_profile: true, show_weekly: true, show_bypass: true, show_enable: true, show_status: true, bypass_minutes: 60, hold_minutes: 60, ...config }; this._render(); }
   async _loadZones() { if (!this._hass) return; try { const d = await callWS(this._hass, { type: `${DOMAIN}/get_config` }); this._zones = d?.zones || []; } catch (e) {} this._render(); }
   _render() {
     const allOpt = '<option value="all">Tutte le zone</option>', zoneOpts = getZoneOptions(this._zones, false);
@@ -213,6 +275,7 @@ class HaThermoCardEditor extends HTMLElement {
       <label class="row"><input type="checkbox" data-field="show_graph" ${this._config.show_graph !== false ? "checked" : ""}>Mostra grafico</label>
       <label class="row"><input type="checkbox" data-field="show_slider" ${this._config.show_slider !== false ? "checked" : ""}>Mostra slider</label>
       <label class="row"><input type="checkbox" data-field="show_profile" ${this._config.show_profile !== false ? "checked" : ""}>Mostra profilo</label>
+      <label class="row"><input type="checkbox" data-field="show_weekly" ${this._config.show_weekly !== false ? "checked" : ""}>Mostra pianificazione settimanale</label>
       <label class="row"><input type="checkbox" data-field="show_bypass" ${this._config.show_bypass !== false ? "checked" : ""}>Mostra bypass</label>
       <label class="row"><input type="checkbox" data-field="show_enable" ${this._config.show_enable !== false ? "checked" : ""}>Mostra enable</label>
       <label class="row"><input type="checkbox" data-field="show_status" ${this._config.show_status !== false ? "checked" : ""}>Mostra stato</label>
@@ -223,9 +286,9 @@ class HaThermoCardEditor extends HTMLElement {
   }
   _changed() {
     const get = (f) => this.shadowRoot.querySelector(`[data-field="${f}"]`);
-    const isCheckbox = (k) => ["show_graph", "show_slider", "show_profile", "show_bypass", "show_enable", "show_status"].includes(k);
+    const isCheckbox = (k) => ["show_graph", "show_slider", "show_profile", "show_weekly", "show_bypass", "show_enable", "show_status"].includes(k);
     const config = { ...this._config, title: get("title")?.value, zone: get("zone")?.value };
-    ["show_graph", "show_slider", "show_profile", "show_bypass", "show_enable", "show_status"].forEach(k => { if (isCheckbox(k)) config[k] = get(k)?.checked; });
+    ["show_graph", "show_slider", "show_profile", "show_weekly", "show_bypass", "show_enable", "show_status"].forEach(k => { if (isCheckbox(k)) config[k] = get(k)?.checked; });
     ["bypass_minutes", "hold_minutes"].forEach(k => { const v = Number(get(k)?.value); if (v > 0) config[k] = v; });
     this._config = config;
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
@@ -234,3 +297,14 @@ class HaThermoCardEditor extends HTMLElement {
 
 if (!customElements.get("ha-thermo-card")) customElements.define("ha-thermo-card", HaThermoCard);
 if (!customElements.get("ha-thermo-card-editor")) customElements.define("ha-thermo-card-editor", HaThermoCardEditor);
+
+window.customCards = window.customCards || [];
+if (!window.customCards.some((c) => c.type === "ha-thermo-card")) {
+  window.customCards.push({
+    type: "ha-thermo-card",
+    name: "HA Thermo",
+    description: "Controllo termostato, profili, bypass e pianificazione settimanale.",
+    preview: true,
+    documentationURL: "https://github.com/marcopiccinni/ha_thermo",
+  });
+}

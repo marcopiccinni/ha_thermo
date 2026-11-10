@@ -1,9 +1,6 @@
 {
   "domain": "ha_thermo",
   "name": "HA Thermo",
-  "after_dependencies": [
-    "lovelace"
-  ],
   "categories": [
     "climate"
   ],
@@ -13,12 +10,13 @@
   "config_flow": true,
   "dependencies": [
     "frontend",
-    "http"
+    "http",
+    "lovelace"
   ],
   "documentation": "https://github.com/marcopiccinni/ha_thermo",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/marcopiccinni/ha_thermo/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.3.1"
+  "version": "0.3.3"
 }

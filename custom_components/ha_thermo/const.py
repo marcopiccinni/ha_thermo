@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Final
+
+_DOMAIN_MANIFEST = Path(__file__).parent / "manifest.json"
+with _DOMAIN_MANIFEST.open(encoding="utf-8") as _manifest_file:
+    VERSION: Final = json.load(_manifest_file).get("version", "0.0.0")
 
 DOMAIN: Final = "ha_thermo"
 STORAGE_KEY: Final = "ha_thermo.state"
 STORAGE_VERSION: Final = 1
-VERSION: Final = "0.3.1"
 
 # Configuration
 CONF_ZONES: Final = "zones"
@@ -46,6 +51,7 @@ EVENT_BYPASS_STARTED: Final = f"{DOMAIN}_bypass_started"
 EVENT_BYPASS_ENDED: Final = f"{DOMAIN}_bypass_ended"
 EVENT_TARGET_CHANGED: Final = f"{DOMAIN}_target_changed"
 EVENT_MANUAL_OVERRIDE: Final = f"{DOMAIN}_manual_override"
+EVENT_WEEKLY_CHANGED: Final = f"{DOMAIN}_weekly_changed"
 
 # Services
 SERVICE_SET_PROFILE: Final = "set_profile"
@@ -104,20 +110,13 @@ def entity_unique_id(entry_id: str, zone_id: str, key: str) -> str:
     """Generate unique ID."""
     return f"{entry_id}_{zone_id}_{key}".replace("-", "_")
 
-# Asset files
-ASSET_FILES: Final = [
-    "manifest.json",
-    "strings.json",
-    "services.yaml",
-    "translations/en.json",
-    "translations/it.json",
+# Lovelace module entry points (served from custom_components/ha_thermo/www/)
+CARD_FILES: Final = [
+    "ha-thermo-card.js",
+    "ha-thermo-graph-card.js",
 ]
 
-CARD_FILES: Final = [
-    "www/ha-thermo-card.js",
-    "www/ha-thermo-graph-card.js",
-    "www/ha-thermo-common.js",
-]
+COMMON_JS_FILE: Final = "ha-thermo-common.js"
 
 # Time constants
 DAYS: Final = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]

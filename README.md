@@ -62,6 +62,7 @@ hold_minutes: 60
 | `show_graph` | `false` | Mostra il grafico 24h. |
 | `show_slider` | `true` | Mostra slider e pulsanti ±. |
 | `show_profile` | `true` | Mostra selettore profilo. |
+| `show_weekly` | `true` | Pianificazione profilo per giorno (solo modalità automatica). |
 | `show_bypass` | `true` | Mostra pulsanti bypass. |
 | `show_enable` | `true` | Mostra pulsante Auto/Off. |
 | `show_status` | `true` | Mostra stato (profilo, bypass). |
