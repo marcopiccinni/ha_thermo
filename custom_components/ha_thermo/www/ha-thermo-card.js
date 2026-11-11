@@ -21,8 +21,8 @@ import {
   bindHistoryChartResize,
   measureHistoryChartHost,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.4.0";
-import "./ha-thermo-profile-editor.js?v=0.4.0";
+} from "./ha-thermo-common.js?v=0.4.1";
+import "./ha-thermo-profile-editor.js?v=0.4.1";
 
 class HaThermoCard extends HTMLElement {
   constructor() {

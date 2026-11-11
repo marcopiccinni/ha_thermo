@@ -11,8 +11,9 @@
     "step": {
       "init": {
         "title": "HA Thermo Options",
-        "description": "Zones and general settings. Edit 24h curves in the Lovelace card editor (Profiles section).",
+        "description": "Profiles, zones and settings. Curves can also be edited in the Lovelace card editor.",
         "menu_options": {
+          "profiles": "Profiles",
           "settings": "General settings",
           "zones": "Thermostat zones",
           "finish": "Save and close"

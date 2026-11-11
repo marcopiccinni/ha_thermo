@@ -11,8 +11,9 @@
     "step": {
       "init": {
         "title": "HA Thermo Options",
-        "description": "Zones and general settings. Edit 24h temperature curves from the Lovelace card editor (pencil → Edit card → Profiles section).",
+        "description": "Profiles, zones and settings. You can also edit curves in the Lovelace card editor.",
         "menu_options": {
+          "profiles": "Profiles",
           "settings": "General settings",
           "zones": "Thermostat zones",
           "finish": "Save and close"
@@ -20,16 +21,75 @@
       },
       "profiles": {
         "title": "Shared profiles",
-        "description": "Each profile is one 00-23 temperature curve for all thermostats."
+        "description": "Choose a profile. {success}",
+        "data": {
+          "profile": "Profile"
+        }
       },
-      "profile_add": {
-        "title": "New profile"
+      "profile_menu": {
+        "title": "Profile: {profile}",
+        "description": "{summary}",
+        "menu_options": {
+          "edit_hours": "Edit schedule",
+          "duplicate": "Duplicate",
+          "rename": "Rename",
+          "delete": "Delete",
+          "back": "Back"
+        }
       },
-      "profile_edit": {
-        "title": "Edit profile"
+      "profile_hours": {
+        "title": "Hours · {profile}",
+        "description": "Curve preview: {curve_preview}",
+        "data": {
+          "uniform_temp": "Set all hours to (optional)",
+          "hour_0": "00:00",
+          "hour_1": "01:00",
+          "hour_2": "02:00",
+          "hour_3": "03:00",
+          "hour_4": "04:00",
+          "hour_5": "05:00",
+          "hour_6": "06:00",
+          "hour_7": "07:00",
+          "hour_8": "08:00",
+          "hour_9": "09:00",
+          "hour_10": "10:00",
+          "hour_11": "11:00",
+          "hour_12": "12:00",
+          "hour_13": "13:00",
+          "hour_14": "14:00",
+          "hour_15": "15:00",
+          "hour_16": "16:00",
+          "hour_17": "17:00",
+          "hour_18": "18:00",
+          "hour_19": "19:00",
+          "hour_20": "20:00",
+          "hour_21": "21:00",
+          "hour_22": "22:00",
+          "hour_23": "23:00"
+        },
+        "sections": {
+          "night": {"name": "Night 00–05"},
+          "morning": {"name": "Morning 06–11"},
+          "afternoon": {"name": "Afternoon 12–17"},
+          "evening": {"name": "Evening 18–23"}
+        }
       },
-      "profile_clone": {
-        "title": "Duplicate profile"
+      "profile_name_new": {
+        "title": "New profile",
+        "data": {"name": "Name"}
+      },
+      "profile_name_duplicate": {
+        "title": "Duplicate profile",
+        "data": {"name": "Name"}
+      },
+      "profile_name_rename": {
+        "title": "Rename profile",
+        "data": {"name": "New name"}
+      },
+      "profile_delete_confirm": {
+        "title": "Delete {profile}?",
+        "description": "Scheduled days will use {fallback}. Affected zones/days: {impact}.",
+        "data": {"confirm": "I confirm deletion"}
       }
     },
     "error": {
@@ -39,6 +99,13 @@
       "profile_exists": "A profile with this id already exists.",
       "unknown_profile": "Unknown profile.",
       "profile_name_required": "Profile name is required."
+    }
+  },
+  "selector": {
+    "profile_picker": {
+      "options": {
+        "__new__": "+ New profile"
+      }
     }
   },
   "entity": {

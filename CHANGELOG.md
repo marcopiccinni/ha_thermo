@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- **Opzioni integrazione – Profili**: menu iniziale tradotto; elenco a **tendina** con riepilogo curva; sottomenu Modifica orari / Duplica / Rinomina / Elimina; ore in **4 sezioni** (`data_entry_flow.section`: Notte, Mattina, Pomeriggio, Sera); messaggio di successo al ritorno elenco; editor card invariato.
+
 ## 0.4.0
 
 - **Profili duplicati**: migrazione/avvio unisce profili con curva 24h identica e copie migrazione `Eco (Gio)` / `eco_gio` nel profilo base (`eco`); ripunta `weekly_profiles` e rimuove le copie (schema storage **3**).

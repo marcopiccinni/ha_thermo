@@ -11,25 +11,87 @@
     "step": {
       "init": {
         "title": "Opzioni HA Thermo",
-        "description": "Zone e parametri generali. Le curve 24 ore si gestiscono dall’editor della card Lovelace (matita → Modifica card → sezione Profili).",
+        "description": "Profili, zone e parametri. Puoi modificare le curve anche dall’editor card Lovelace.",
         "menu_options": {
-          "settings": "Parametri generali",
+          "profiles": "Profili",
+          "settings": "Impostazioni generali",
           "zones": "Zone termostato",
           "finish": "Salva e chiudi"
         }
       },
       "profiles": {
         "title": "Profili condivisi",
-        "description": "Ogni profilo è una curva temperatura 00-23 valida per tutti i termostati."
+        "description": "Seleziona un profilo. {success}",
+        "data": {
+          "profile": "Profilo"
+        }
       },
-      "profile_add": {
-        "title": "Nuovo profilo"
+      "profile_menu": {
+        "title": "Profilo: {profile}",
+        "description": "{summary}",
+        "menu_options": {
+          "edit_hours": "Modifica orari",
+          "duplicate": "Duplica",
+          "rename": "Rinomina",
+          "delete": "Elimina",
+          "back": "Indietro"
+        }
       },
-      "profile_edit": {
-        "title": "Modifica profilo"
+      "profile_hours": {
+        "title": "Orari · {profile}",
+        "description": "Anteprima curva: {curve_preview}",
+        "data": {
+          "uniform_temp": "Imposta tutte le ore a (opzionale)",
+          "hour_0": "00:00",
+          "hour_1": "01:00",
+          "hour_2": "02:00",
+          "hour_3": "03:00",
+          "hour_4": "04:00",
+          "hour_5": "05:00",
+          "hour_6": "06:00",
+          "hour_7": "07:00",
+          "hour_8": "08:00",
+          "hour_9": "09:00",
+          "hour_10": "10:00",
+          "hour_11": "11:00",
+          "hour_12": "12:00",
+          "hour_13": "13:00",
+          "hour_14": "14:00",
+          "hour_15": "15:00",
+          "hour_16": "16:00",
+          "hour_17": "17:00",
+          "hour_18": "18:00",
+          "hour_19": "19:00",
+          "hour_20": "20:00",
+          "hour_21": "21:00",
+          "hour_22": "22:00",
+          "hour_23": "23:00"
+        },
+        "sections": {
+          "night": {"name": "Notte 00–05"},
+          "morning": {"name": "Mattina 06–11"},
+          "afternoon": {"name": "Pomeriggio 12–17"},
+          "evening": {"name": "Sera 18–23"}
+        }
       },
-      "profile_clone": {
-        "title": "Duplica profilo"
+      "profile_name_new": {
+        "title": "Nuovo profilo",
+        "description": "Scegli un nome univoco per il profilo.",
+        "data": {"name": "Nome"}
+      },
+      "profile_name_duplicate": {
+        "title": "Duplica profilo",
+        "description": "Nome della copia.",
+        "data": {"name": "Nome"}
+      },
+      "profile_name_rename": {
+        "title": "Rinomina profilo",
+        "data": {"name": "Nuovo nome"}
+      },
+      "profile_delete_confirm": {
+        "title": "Elimina {profile}?",
+        "description": "I giorni in pianificazione useranno il profilo {fallback}. Zone/giorni interessati: {impact}.",
+        "data": {"confirm": "Confermo l’eliminazione"}
       }
     },
     "error": {
@@ -39,6 +101,13 @@
       "profile_exists": "Esiste già un profilo con questo identificativo.",
       "unknown_profile": "Profilo sconosciuto.",
       "profile_name_required": "Il nome del profilo è obbligatorio."
+    }
+  },
+  "selector": {
+    "profile_picker": {
+      "options": {
+        "__new__": "+ Nuovo profilo"
+      }
     }
   },
   "entity": {
