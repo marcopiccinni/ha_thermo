@@ -285,7 +285,6 @@ class HaThermoGraphCard extends HTMLElement {
         : this._climateEntity()
           ? `<div class="sub">${esc(this._climateEntity())}</div>`
           : "";
-    const height = this._config.height || 220;
     const body = !this._data
       ? `<div class="empty">${this._error ? esc(this._error) : "Caricamento…"}</div>`
       : !this._climateEntity()
