@@ -11,11 +11,10 @@
     "step": {
       "init": {
         "title": "HA Thermo Options",
-        "description": "Configure zones, shared profiles and settings.",
+        "description": "Zones and general settings. Edit 24h curves in the Lovelace card editor (Profiles section).",
         "menu_options": {
           "settings": "General settings",
           "zones": "Thermostat zones",
-          "profiles": "Shared profiles (24h curve)",
           "finish": "Save and close"
         }
       },

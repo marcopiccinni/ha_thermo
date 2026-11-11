@@ -47,6 +47,7 @@ from .const import (
     entity_unique_id,
 )
 from .models import Bypass, Profile, Zone, slugify
+from .profile_dedup import apply_profile_merge
 from .profile_migration import migrate_profiles_list
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,6 +76,7 @@ class ThermoManager:
         self._applied_mode: dict[str, str] = {}
         self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
         self._entry_id = entry.entry_id
+        self._last_profile_merge: dict[str, str] = {}
 
     async def async_setup(self) -> None:
         """Initialize the manager."""
@@ -82,6 +84,12 @@ class ThermoManager:
         self._restore(raw)
         self._sync_zones()
         self._migrate_storage_schema(raw)
+        self._last_profile_merge = apply_profile_merge(
+            self.profiles,
+            self.weekly_profiles,
+            self.active_profiles,
+            self.pinned_profiles,
+        )
         self._save()
 
     def _restore(self, raw: dict[str, Any]) -> None:
@@ -219,7 +227,7 @@ class ThermoManager:
     def _save(self) -> None:
         """Persist state to storage."""
         data = {
-            "schema_version": 2,
+            "schema_version": 3,
             "enabled": self.enabled,
             "disabled_zones": sorted(self.disabled_zones),
             "manual_hold": self.settings["manual_hold"],

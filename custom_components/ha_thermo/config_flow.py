@@ -226,7 +226,7 @@ class ThermoOptionsFlow(OptionsFlow):
             self._loaded = True
         return self.async_show_menu(
             step_id="init",
-            menu_options=["settings", "zones", "profiles", "finish"],
+            menu_options=["settings", "zones", "finish"],
         )
 
     async def async_step_settings(

@@ -120,6 +120,7 @@ def entity_unique_id(entry_id: str, zone_id: str, key: str) -> str:
 CARD_FILES: Final = [
     "ha-thermo-card.js",
     "ha-thermo-graph-card.js",
+    "ha-thermo-profile-editor.js",
 ]
 
 COMMON_JS_FILE: Final = "ha-thermo-common.js"

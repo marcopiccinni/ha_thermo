@@ -24,7 +24,8 @@ import {
   bindHistoryChartResize,
   measureHistoryChartHost,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.3.12";
+} from "./ha-thermo-common.js?v=0.4.0";
+import "./ha-thermo-profile-editor.js?v=0.4.0";
 
 const DEFAULT_CONFIG = () => ({
   title: "Grafico",
@@ -389,6 +390,7 @@ class HaThermoGraphCardEditor extends HTMLElement {
     this._profiles = [];
     this._weekly = {};
     this._loaded = false;
+    this._shellReady = false;
   }
 
   set hass(h) {
@@ -428,21 +430,30 @@ class HaThermoGraphCardEditor extends HTMLElement {
     this._weekly[zoneId] = schedule;
   }
 
+  _paintWeekly() {
+    const host = this.shadowRoot?.querySelector("#weekly-host");
+    if (!host) return;
+    const z = this._zoneRecord();
+    if (!z) {
+      host.innerHTML = `<p class="hint">Seleziona una zona termostato.</p>`;
+      return;
+    }
+    const schedule = this._weekly[z.id] || {};
+    host.innerHTML = WEEK_DAYS.map((day) => {
+      const value = schedule[day] || "";
+      return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-weekly data-day="${day}" data-zone-id="${esc(z.id)}">${profileOptions(this._profiles, value)}</select></label>`;
+    }).join("");
+    host.querySelectorAll("[data-weekly]").forEach((el) => el.addEventListener("change", () => this._onWeeklyChange(el)));
+  }
+
   _render() {
     const c = this._config;
-    const z = this._zoneRecord();
-    const schedule = z ? this._weekly[z.id] || {} : {};
     const rangeOpts = GRAPH_TIME_RANGES.map(
       (r) => `<option value="${r.key}" ${(c.time_range || "48h") === r.key ? "selected" : ""}>${esc(r.label)}</option>`,
     ).join("");
     const zoneOpts = getZoneOptions(this._zones, false);
     const roomVal = Array.isArray(c.room_sensors) ? c.room_sensors.join(", ") : c.room_sensors || "";
-    const weekRows = z
-      ? WEEK_DAYS.map((day) => {
-          const value = schedule[day] || "";
-          return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-weekly data-day="${day}" data-zone-id="${esc(z.id)}">${profileOptions(this._profiles, value)}</select></label>`;
-        }).join("")
-      : `<p class="hint">Seleziona una zona termostato.</p>`;
+    if (!this._shellReady) {
     this.shadowRoot.innerHTML = `<style>
       .form{display:grid;gap:12px;padding:8px 0}
       label{display:grid;gap:4px;font-size:0.9rem}
@@ -453,8 +464,10 @@ class HaThermoGraphCardEditor extends HTMLElement {
       .weekly-day{font-size:0.85rem}
       .hint{font-size:0.75rem;color:var(--secondary-text-color)}
     </style><div class="form">
-      <label>Titolo<input type="text" data-field="title" value="${esc(c.title || "")}"></label>
+      <label>Titolo<input type="text" data-field="title" value=""></label>
       <label>Termostato (zona HA Thermo)<select data-field="zone">${zoneOpts}</select></label>
+      <div class="section">Profili</div>
+      <ha-thermo-profile-editor></ha-thermo-profile-editor>
       <span class="hint">Storico sul <code>climate_entity</code> fisico della zona. <code>climate_entity</code> in YAML opzionale.</span>
       <label>Sensori temperatura extra<textarea data-field="room_sensors" rows="2" placeholder="sensor.sala">${esc(roomVal)}</textarea></label>
       <div class="section">Serie visibili</div>
@@ -469,12 +482,33 @@ class HaThermoGraphCardEditor extends HTMLElement {
       <label>Colore destinataria<input data-field="color_target" value="${esc(c.color_target || HISTORY_SERIES_COLORS.target)}"></label>
       <label>Colore profilo<input data-field="color_profile" value="${esc(c.color_profile || HISTORY_SERIES_COLORS.profile)}"></label>
       <div class="section">Settimana (integrazione)</div>
-      <div class="weekly-grid">${weekRows}</div>
+      <div class="weekly-grid" id="weekly-host"></div>
     </div>`;
-    const zoneSel = this.shadowRoot.querySelector('[data-field="zone"]');
-    if (zoneSel && c.zone) zoneSel.value = c.zone;
+    this._profileEl = this.shadowRoot.querySelector("ha-thermo-profile-editor");
+    this._profileEl?.addEventListener("ha-thermo-profiles-updated", (e) => {
+      this._profiles = e.detail?.profiles || this._profiles;
+      this._paintWeekly();
+    });
     this.shadowRoot.querySelectorAll("[data-field]").forEach((el) => el.addEventListener("change", () => this._changed()));
-    this.shadowRoot.querySelectorAll("[data-weekly]").forEach((el) => el.addEventListener("change", () => this._onWeeklyChange(el)));
+    this._shellReady = true;
+    }
+    const get = (f) => this.shadowRoot.querySelector(`[data-field="${f}"]`);
+    if (get("title")) get("title").value = c.title || "";
+    if (get("zone") && c.zone) get("zone").value = c.zone;
+    if (get("room_sensors")) get("room_sensors").value = roomVal;
+    if (get("time_range")) get("time_range").value = c.time_range || "48h";
+    if (get("height")) get("height").value = c.height || 220;
+    if (get("min_temp")) get("min_temp").value = c.min_temp ?? "";
+    if (get("max_temp")) get("max_temp").value = c.max_temp ?? "";
+    if (get("color_current")) get("color_current").value = c.color_current || HISTORY_SERIES_COLORS.current;
+    if (get("color_target")) get("color_target").value = c.color_target || HISTORY_SERIES_COLORS.target;
+    if (get("color_profile")) get("color_profile").value = c.color_profile || HISTORY_SERIES_COLORS.profile;
+    if (get("show_current")) get("show_current").checked = c.show_current !== false;
+    if (get("show_target")) get("show_target").checked = c.show_target !== false;
+    if (get("show_room_sensors")) get("show_room_sensors").checked = c.show_room_sensors !== false;
+    if (get("show_profile_overlay")) get("show_profile_overlay").checked = c.show_profile_overlay === true;
+    if (this._hass && this._profileEl) this._profileEl.hass = this._hass;
+    this._paintWeekly();
   }
 
   _changed() {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- **Profili duplicati**: migrazione/avvio unisce profili con curva 24h identica e copie migrazione `Eco (Gio)` / `eco_gio` nel profilo base (`eco`); ripunta `weekly_profiles` e rimuove le copie (schema storage **3**).
+- **Editor profili**: sezione **Profili** nell’editor Lovelace delle card (grafico a barre 00–23, drag 0.5°, selezione ore, salva via WebSocket `profile/*`); menu opzioni integrazione senza elenco radio `profile_action`.
+- **Cache card**: bundle `ha-thermo-profile-editor.js` e `?v=0.4.0` su tutti gli import.
+
 ## 0.3.12
 
 - **Grafici responsive**: SVG ridisegnato alla **larghezza/altezza reale** del contenitore (`ResizeObserver`), senza `preserveAspectRatio: none`; tick **X** adattivi (1–12 h, ~80px etichetta) e **Y** (1° o 0.5°); margini per evitare tagli su °C e date; `getGridOptions` / `getLayoutOptions` per la vista sezioni.

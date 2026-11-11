@@ -11,11 +11,10 @@
     "step": {
       "init": {
         "title": "Opzioni HA Thermo",
-        "description": "Configura zone, profili condivisi e parametri.",
+        "description": "Zone e parametri generali. Le curve 24 ore si gestiscono dall’editor della card Lovelace (matita → Modifica card → sezione Profili).",
         "menu_options": {
           "settings": "Parametri generali",
           "zones": "Zone termostato",
-          "profiles": "Profili condivisi (curve 24 ore)",
           "finish": "Salva e chiudi"
         }
       },

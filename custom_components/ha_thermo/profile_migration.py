@@ -72,17 +72,20 @@ def migrate_legacy_profile_dict(data: dict[str, Any]) -> list[dict[str, Any]]:
     for day in DAYS:
         if day == "mon":
             continue
-        if not curves_equal(day_hourly[day], reference):
-            suffix = _DAY_SUFFIX[day]
-            extras.append(
-                {
-                    "id": f"{profile_id}_{day}",
-                    "name": f"{name} ({suffix})",
-                    "icon": icon,
-                    "hvac_mode": hvac_mode,
-                    "hourly": list(day_hourly[day]),
-                }
-            )
+        curve = day_hourly[day]
+        if curves_equal(curve, reference):
+            continue
+        suffix = _DAY_SUFFIX[day]
+        extra_id = f"{profile_id}_{day}"
+        extras.append(
+            {
+                "id": extra_id,
+                "name": f"{name} ({suffix})",
+                "icon": icon,
+                "hvac_mode": hvac_mode,
+                "hourly": list(curve),
+            }
+        )
 
     primary = {
         "id": profile_id,

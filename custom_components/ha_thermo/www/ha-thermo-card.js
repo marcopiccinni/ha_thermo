@@ -21,7 +21,8 @@ import {
   bindHistoryChartResize,
   measureHistoryChartHost,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.3.12";
+} from "./ha-thermo-common.js?v=0.4.0";
+import "./ha-thermo-profile-editor.js?v=0.4.0";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -513,6 +514,7 @@ class HaThermoCardEditor extends HTMLElement {
     this._profiles = [];
     this._weekly = {};
     this._loaded = false;
+    this._shellReady = false;
   }
 
   set hass(h) {
@@ -560,15 +562,7 @@ class HaThermoCardEditor extends HTMLElement {
     this._weekly[zoneId] = schedule;
   }
 
-  _render() {
-    const z = this._zoneRecord();
-    const schedule = z ? this._weekly[z.id] || {} : {};
-    const weekRows = z
-      ? WEEK_DAYS.map((day) => {
-          const value = schedule[day] || "";
-          return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-weekly data-day="${day}" data-zone-id="${esc(z.id)}">${profileOptions(this._profiles, value)}</select></label>`;
-        }).join("")
-      : `<p class="hint">Seleziona una zona termostato.</p>`;
+  _renderShell() {
     this.shadowRoot.innerHTML = `<style>
       .form{display:grid;gap:10px;padding:4px 0;font-size:0.9rem}
       label{display:grid;gap:4px}
@@ -581,22 +575,62 @@ class HaThermoCardEditor extends HTMLElement {
     </style><div class="form">
       <label>Titolo<input data-f="title" value="${esc(this._config.title || "")}"></label>
       <label>Termostato (zona HA Thermo)<select data-f="zone">${getZoneOptions(this._zones, false)}</select></label>
+      <div class="section">Profili (curve 24h condivise)</div>
+      <ha-thermo-profile-editor></ha-thermo-profile-editor>
       <div class="section">Grafico</div>
-      <label class="row"><input type="checkbox" data-f="show_graph" ${this._config.show_graph !== false ? "checked" : ""}> Mostra grafico</label>
-      <label class="row"><input type="checkbox" data-f="show_graph_current" ${this._config.show_graph_current !== false ? "checked" : ""}> Serie: temperatura attuale</label>
-      <label class="row"><input type="checkbox" data-f="show_graph_target" ${this._config.show_graph_target !== false ? "checked" : ""}> Serie: temperatura destinataria</label>
+      <label class="row"><input type="checkbox" data-f="show_graph" checked> Mostra grafico</label>
+      <label class="row"><input type="checkbox" data-f="show_graph_current" checked> Serie: temperatura attuale</label>
+      <label class="row"><input type="checkbox" data-f="show_graph_target" checked> Serie: temperatura destinataria</label>
       <div class="section">Termostato</div>
-      <label class="row"><input type="checkbox" data-f="show_slider" ${this._config.show_slider !== false ? "checked" : ""}> Slider in Manuale</label>
-      <label class="row"><input type="checkbox" data-f="show_status" ${this._config.show_status !== false ? "checked" : ""}> Mostra profilo attivo</label>
+      <label class="row"><input type="checkbox" data-f="show_slider" checked> Slider in Manuale</label>
+      <label class="row"><input type="checkbox" data-f="show_status" checked> Mostra profilo attivo</label>
       <div class="section">Settimana (salvata su integrazione)</div>
-      <div class="weekly-grid">${weekRows}</div>
+      <div class="weekly-grid" id="weekly-host"></div>
     </div>`;
-    const zoneSel = this.shadowRoot.querySelector('[data-f="zone"]');
-    if (zoneSel && this._config.zone) zoneSel.value = this._config.zone;
+    this._weeklyHost = this.shadowRoot.querySelector("#weekly-host");
+    this._profileEl = this.shadowRoot.querySelector("ha-thermo-profile-editor");
+    this._profileEl?.addEventListener("ha-thermo-profiles-updated", (e) => {
+      this._profiles = e.detail?.profiles || this._profiles;
+      this._paintWeekly();
+    });
     this.shadowRoot.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => this._emitConfig()));
-    this.shadowRoot.querySelectorAll("[data-weekly]").forEach((el) =>
+    this._shellReady = true;
+  }
+
+  _syncFormFields() {
+    const c = this._config;
+    const g = (k) => this.shadowRoot.querySelector(`[data-f="${k}"]`);
+    if (g("title")) g("title").value = c.title || "";
+    if (g("zone") && c.zone) g("zone").value = c.zone;
+    if (g("show_graph")) g("show_graph").checked = c.show_graph !== false;
+    if (g("show_graph_current")) g("show_graph_current").checked = c.show_graph_current !== false;
+    if (g("show_graph_target")) g("show_graph_target").checked = c.show_graph_target !== false;
+    if (g("show_slider")) g("show_slider").checked = c.show_slider !== false;
+    if (g("show_status")) g("show_status").checked = c.show_status !== false;
+    if (this._hass && this._profileEl) this._profileEl.hass = this._hass;
+  }
+
+  _paintWeekly() {
+    if (!this._weeklyHost) return;
+    const z = this._zoneRecord();
+    if (!z) {
+      this._weeklyHost.innerHTML = `<p class="hint">Seleziona una zona termostato.</p>`;
+      return;
+    }
+    const schedule = this._weekly[z.id] || {};
+    this._weeklyHost.innerHTML = WEEK_DAYS.map((day) => {
+      const value = schedule[day] || "";
+      return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-weekly data-day="${day}" data-zone-id="${esc(z.id)}">${profileOptions(this._profiles, value)}</select></label>`;
+    }).join("");
+    this._weeklyHost.querySelectorAll("[data-weekly]").forEach((el) =>
       el.addEventListener("change", () => this._onWeeklyChange(el)),
     );
+  }
+
+  _render() {
+    if (!this._shellReady) this._renderShell();
+    this._syncFormFields();
+    this._paintWeekly();
   }
 
   _emitConfig() {
