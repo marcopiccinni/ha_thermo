@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.3.11";
+export const INTEGRATION_VERSION = "0.3.12";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -512,19 +512,44 @@ export function yDomainHistory(values, minOverride, maxOverride) {
   return { min, max };
 }
 
-export function xAxisTickMarks(start, end, spanHours) {
-  const stepH = spanHours <= 72 ? 6 : 12;
-  const step = stepH * 3600000;
+/** Plot margins in CSS px (fonts stay 1:1 with the SVG). */
+export function historyChartMargins(width, height) {
+  const left = Math.max(40, Math.min(56, Math.round(width * 0.1)));
+  const right = 14;
+  const top = 22;
+  const bottom = height >= 200 ? 40 : 34;
+  const plotW = Math.max(8, width - left - right);
+  const plotH = Math.max(8, height - top - bottom);
+  return { left, right, top, bottom, plotW, plotH };
+}
+
+const TIME_TICK_STEPS_H = [1, 2, 3, 6, 12];
+
+/** Pick hour step so labels are ~labelPx apart (1h–12h). */
+export function pickTimeTickStepHours(spanMs, plotWidthPx, labelPx = 80) {
+  if (!plotWidthPx || plotWidthPx < 40) return 6;
+  let chosen = TIME_TICK_STEPS_H[TIME_TICK_STEPS_H.length - 1];
+  for (const stepH of TIME_TICK_STEPS_H) {
+    const tickCount = spanMs / (stepH * 3600000) + 1;
+    if (tickCount * labelPx <= plotWidthPx + labelPx * 0.5) chosen = stepH;
+  }
+  return chosen;
+}
+
+export function xAxisTickMarks(start, end, plotWidthPx) {
+  const span = Math.max(1, end - start);
+  const stepH = pickTimeTickStepHours(span, plotWidthPx);
   const marks = [];
   const cursor = new Date(start);
   cursor.setMinutes(0, 0, 0);
   cursor.setSeconds(0, 0);
   const offset = cursor.getHours() % stepH;
   if (offset) cursor.setHours(cursor.getHours() + (stepH - offset));
+  const step = stepH * 3600000;
   while (cursor.getTime() <= end + step) {
     const ms = cursor.getTime();
-    if (ms >= start - 1 && ms <= end + 1) {
-      const isMidnight = cursor.getHours() === 0;
+    if (ms >= start - 1 && ms <= end + step) {
+      const isMidnight = cursor.getHours() === 0 && cursor.getMinutes() === 0;
       marks.push({
         ms,
         isMidnight,
@@ -534,9 +559,31 @@ export function xAxisTickMarks(start, end, spanHours) {
           : null,
       });
     }
-    cursor.setHours(cursor.getHours() + stepH);
+    cursor.setTime(cursor.getTime() + step);
   }
   return marks;
+}
+
+export function yAxisTickValues(minY, maxY, plotHeightPx) {
+  const range = maxY - minY;
+  if (range <= 0) return [minY, maxY];
+  const pxPerTick = plotHeightPx >= 140 && range <= 6 ? 22 : 28;
+  let step = 1;
+  if (plotHeightPx >= 160 && range <= 8) {
+    const halfTicks = range / 0.5;
+    if (halfTicks * 22 <= plotHeightPx + 10) step = 0.5;
+  }
+  const ticks = [];
+  const start = Math.ceil(minY / step) * step;
+  for (let v = start; v <= maxY + step * 0.01; v += step) {
+    ticks.push(Math.round(v * 10) / 10);
+  }
+  if (pxPerTick > 0 && ticks.length * pxPerTick > plotHeightPx + 24 && step < 1) {
+    step = 1;
+    ticks.length = 0;
+    for (let v = Math.ceil(minY); v <= Math.floor(maxY); v += 1) ticks.push(v);
+  }
+  return ticks;
 }
 
 export function assembleHistorySeries(opts) {
@@ -548,49 +595,53 @@ export function renderHistoryChartSvg({
   visibility = {},
   start,
   end,
-  spanHours,
   width = 480,
   height = 200,
   minY,
   maxY,
 }) {
-  const left = 42;
-  const right = 10;
-  const top = 16;
-  const bottom = 28;
-  const plotW = width - left - right;
-  const plotH = height - top - bottom;
+  const w = Math.max(80, Math.round(width));
+  const h = Math.max(100, Math.round(height));
+  const { left, right, top, bottom, plotW, plotH } = historyChartMargins(w, h);
   const span = Math.max(1, end - start);
+  const ySpan = Math.max(0.001, maxY - minY);
   const xScale = (t) => left + ((t - start) / span) * plotW;
-  const yScale = (v) => top + (1 - (v - minY) / (maxY - minY)) * plotH;
+  const yScale = (v) => top + (1 - (v - minY) / ySpan) * plotH;
+  const font = 'font-size="11" font-family="var(--ha-font-family,Roboto,sans-serif)"';
 
   const visible = series.filter((s) => visibility[s.id] !== false);
   const hasData = visible.some((s) => s.points?.length);
+  const svgOpen = (extra) =>
+    `<svg class="curve" data-history-chart xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" data-range-start="${start}" data-range-end="${end}" data-min-y="${minY}" data-max-y="${maxY}" data-plot-left="${left}" data-plot-top="${top}" data-plot-w="${plotW}" data-plot-h="${plotH}"${extra || ""}>`;
+
   if (!hasData) {
-    return `<svg class="curve" data-history-chart viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet"><text x="${width / 2}" y="${height / 2}" text-anchor="middle" fill="var(--secondary-text-color)">Nessun dato storico</text></svg>`;
+    return `${svgOpen("")}><text x="${w / 2}" y="${h / 2}" text-anchor="middle" fill="var(--secondary-text-color)" ${font}>Nessun dato storico</text></svg>`;
   }
 
-  const yGrid = [];
-  for (let v = Math.ceil(minY); v <= Math.floor(maxY); v += 1) {
+  const unitY = top - 8;
+  const yGrid = [
+    `<text x="${left - 8}" y="${unitY}" text-anchor="end" fill="var(--secondary-text-color)" ${font}>°C</text>`,
+  ];
+  for (const v of yAxisTickValues(minY, maxY, plotH)) {
     const y = yScale(v);
+    if (y < top - 2 || y > top + plotH + 2) continue;
+    const label = Number.isInteger(v) ? String(v) : v.toFixed(1).replace(/\.0$/, "");
     yGrid.push(
-      `<line x1="${left}" y1="${y.toFixed(1)}" x2="${width - right}" y2="${y.toFixed(1)}" stroke="var(--divider-color)" stroke-width="0.6" opacity="0.55"/>` +
-        `<text x="${left - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--secondary-text-color)">${v}</text>`,
+      `<line x1="${left}" y1="${y.toFixed(2)}" x2="${w - right}" y2="${y.toFixed(2)}" stroke="var(--divider-color)" stroke-width="1" opacity="0.5"/>` +
+        `<text x="${left - 8}" y="${(y + 4).toFixed(2)}" text-anchor="end" fill="var(--secondary-text-color)" ${font}>${label}</text>`,
     );
   }
-  yGrid.push(
-    `<text x="${left - 6}" y="${(top - 4).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--secondary-text-color)">°C</text>`,
-  );
 
-  const xGrid = xAxisTickMarks(start, end, spanHours).map((m) => {
+  const xGrid = xAxisTickMarks(start, end, plotW).map((m) => {
     const x = xScale(m.ms);
-    const labelY = m.isMidnight ? height - 18 : height - 8;
+    if (x < left - 1 || x > w - right + 1) return "";
+    const labelY = m.isMidnight ? h - 10 : h - bottom + 14;
     const weight = m.isMidnight ? "600" : "400";
     const fill = m.isMidnight ? "var(--primary-text-color)" : "var(--secondary-text-color)";
-    let text = m.isMidnight ? m.date : m.time;
+    const text = m.isMidnight ? m.date : m.time;
     return (
-      `<line x1="${x.toFixed(1)}" y1="${top}" x2="${x.toFixed(1)}" y2="${height - bottom}" stroke="var(--divider-color)" stroke-width="0.4" opacity="0.35"/>` +
-      `<text x="${x.toFixed(1)}" y="${labelY}" text-anchor="middle" font-size="8" font-weight="${weight}" fill="${fill}">${esc(text)}</text>`
+      `<line x1="${x.toFixed(2)}" y1="${top}" x2="${x.toFixed(2)}" y2="${top + plotH}" stroke="var(--divider-color)" stroke-width="1" opacity="0.35"/>` +
+      `<text x="${x.toFixed(2)}" y="${labelY}" text-anchor="middle" font-weight="${weight}" fill="${fill}" ${font}>${esc(text)}</text>`
     );
   });
 
@@ -599,11 +650,11 @@ export function renderHistoryChartSvg({
       const d = stepLinePath(s.points, xScale, yScale, start, end);
       if (!d) return "";
       const dash = s.dashed ? ` stroke-dasharray="6 4" stroke-width="1.5"` : ` stroke-width="2"`;
-      return `<path data-series-path="${esc(s.id)}" d="${d}" fill="none" stroke="${esc(s.color)}"${dash} vector-effect="non-scaling-stroke"/>`;
+      return `<path data-series-path="${esc(s.id)}" d="${d}" fill="none" stroke="${esc(s.color)}"${dash}/>`;
     })
     .join("");
 
-  return `<svg class="curve" data-history-chart viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" data-range-start="${start}" data-range-end="${end}" data-min-y="${minY}" data-max-y="${maxY}">
+  return `${svgOpen("")}>
     ${yGrid.join("")}
     ${xGrid.join("")}
   <rect class="chart-hit" x="${left}" y="${top}" width="${plotW}" height="${plotH}" fill="transparent" pointer-events="all"/>
@@ -650,6 +701,45 @@ export function renderHistoryChartBlock(model, visibility) {
   return `${svg}${legend}<div class="chart-tooltip" hidden></div>`;
 }
 
+export function measureHistoryChartHost(host, fallbackHeight = 200) {
+  if (!host) return { width: 480, height: fallbackHeight };
+  const width = Math.max(80, Math.floor(host.clientWidth) || Math.floor(host.getBoundingClientRect().width) || 480);
+  const height = Math.max(100, Math.floor(host.clientHeight) || fallbackHeight);
+  return { width, height };
+}
+
+/** ResizeObserver: redraw chart at real CSS px size (no non-uniform SVG scale). */
+export function bindHistoryChartResize(host, { getModel, onResize }) {
+  if (!host) return null;
+  if (host._haThermoChartRo) return host._haThermoChartRo;
+  let raf = 0;
+  const run = () => {
+    raf = 0;
+    const model = getModel?.();
+    if (!model || !host.isConnected) return;
+    const fb = model.height || 200;
+    const { width, height } = measureHistoryChartHost(host, fb);
+    if (model.width === width && model.height === height) return;
+    model.width = width;
+    model.height = height;
+    onResize?.();
+  };
+  const ro = new ResizeObserver(() => {
+    if (!raf) raf = requestAnimationFrame(run);
+  });
+  ro.observe(host);
+  host._haThermoChartRo = ro;
+  requestAnimationFrame(run);
+  return ro;
+}
+
+export function unbindHistoryChartResize(host) {
+  if (host?._haThermoChartRo) {
+    host._haThermoChartRo.disconnect();
+    host._haThermoChartRo = null;
+  }
+}
+
 export function wireHistoryChartUI(host, model, visibility) {
   if (!host) return;
   const svg = host.querySelector("svg[data-history-chart]");
@@ -658,22 +748,13 @@ export function wireHistoryChartUI(host, model, visibility) {
   const cross = host.querySelector(".chart-crosshair");
   if (!svg || !tip || !hit || !model) return;
 
-  const left = 42;
-  const right = 10;
-  const top = 16;
-  const bottom = 28;
-  const width = model.width || 480;
-  const height = model.height || 200;
-  const plotW = width - left - right;
-  const plotH = height - top - bottom;
+  const left = Number(svg.dataset.plotLeft) || historyChartMargins(model.width, model.height).left;
+  const top = Number(svg.dataset.plotTop) || historyChartMargins(model.width, model.height).top;
+  const plotW = Number(svg.dataset.plotW) || 1;
+  const plotH = Number(svg.dataset.plotH) || 1;
   const { start, end, minY, maxY, series } = model;
   const span = end - start;
-  const clientToTime = (clientX) => {
-    const rect = svg.getBoundingClientRect();
-    const rel = (clientX - rect.left) / rect.width;
-    return start + rel * span;
-  };
-  const yAt = (v) => top + (1 - (v - minY) / (maxY - minY)) * plotH;
+  const ySpan = Math.max(0.001, maxY - minY);
 
   const valueAtTime = (points, t) => {
     if (!points?.length) return null;
@@ -684,8 +765,9 @@ export function wireHistoryChartUI(host, model, visibility) {
 
   const showTip = (ev) => {
     const rect = svg.getBoundingClientRect();
-    const relX = Math.min(Math.max(ev.clientX - rect.left, 0), rect.width);
-    const t = start + (relX / rect.width) * span;
+    const relInPlot = Math.min(Math.max(ev.clientX - rect.left - left, 0), plotW);
+    const relX = left + relInPlot;
+    const t = start + (relInPlot / plotW) * span;
     const x = left + ((t - start) / span) * plotW;
     if (cross) {
       cross.setAttribute("x1", String(x));

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.12
+
+- **Grafici responsive**: SVG ridisegnato alla **larghezza/altezza reale** del contenitore (`ResizeObserver`), senza `preserveAspectRatio: none`; tick **X** adattivi (1–12 h, ~80px etichetta) e **Y** (1° o 0.5°); margini per evitare tagli su °C e date; `getGridOptions` / `getLayoutOptions` per la vista sezioni.
+
 ## 0.3.11
 
 - **Card controllo**: rimossa l’icona **ingranaggio** (`mdi:cog`) e l’apertura **more-info** dal climate in intestazione (la card grafico non aveva l’icona).

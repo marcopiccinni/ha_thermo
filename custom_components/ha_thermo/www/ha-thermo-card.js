@@ -18,7 +18,10 @@ import {
   HistoryStreamAccumulator,
   callWS,
   todayKey,
-} from "./ha-thermo-common.js?v=0.3.11";
+  bindHistoryChartResize,
+  measureHistoryChartHost,
+  unbindHistoryChartResize,
+} from "./ha-thermo-common.js?v=0.3.12";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -49,6 +52,31 @@ class HaThermoCard extends HTMLElement {
 
   static getConfigElement() {
     return document.createElement("ha-thermo-card-editor");
+  }
+
+  static getGridOptions() {
+    return {
+      rows: 4,
+      columns: 6,
+      min_rows: 3,
+      max_rows: 10,
+      min_columns: 3,
+      max_columns: 12,
+    };
+  }
+
+  static getLayoutOptions() {
+    return {
+      grid_rows: 4,
+      grid_columns: 6,
+      grid_min_rows: 3,
+      grid_max_rows: 10,
+    };
+  }
+
+  disconnectedCallback() {
+    const host = this.shadowRoot?.querySelector("#mini-chart-host");
+    unbindHistoryChartResize(host);
   }
 
   setConfig(config) {
@@ -192,8 +220,15 @@ class HaThermoCard extends HTMLElement {
   _paintMiniChart() {
     const host = this.shadowRoot?.querySelector("#mini-chart-host");
     if (!host || !this._chartModel) return;
+    const { width, height } = measureHistoryChartHost(host, 168);
+    this._chartModel.width = width;
+    this._chartModel.height = height;
     host.innerHTML = renderHistoryChartBlock(this._chartModel, this._chartVisibility());
     wireHistoryChartUI(host, this._chartModel, this._chartVisibility());
+    bindHistoryChartResize(host, {
+      getModel: () => this._chartModel,
+      onResize: () => this._paintMiniChart(),
+    });
   }
 
   _updateTempReadout(zone, climateId) {
@@ -262,7 +297,6 @@ class HaThermoCard extends HTMLElement {
       start,
       end,
       spanHours: hours,
-      width: 320,
       height: 168,
       minY,
       maxY,
@@ -380,8 +414,8 @@ class HaThermoCard extends HTMLElement {
       .temp-readonly .sep,.temp-readonly .setpoint{color:var(--secondary-text-color);font-size:1rem}
       .target{font-size:0.95rem;color:var(--secondary-text-color)}
       .meta{font-size:0.8rem;color:var(--secondary-text-color);margin-top:8px}
-      .mini-chart{position:relative;margin:8px 0 4px}
-      .mini-chart .curve{width:100%;height:168px;display:block}
+      .mini-chart{position:relative;margin:8px 0 4px;width:100%;min-height:168px;height:100%;box-sizing:border-box}
+      .mini-chart .curve{display:block;vertical-align:top}
       .hist-legend{display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:0.72rem}
       .hist-legend-item{display:inline-flex;align-items:center;gap:6px;margin-right:10px}
       .hist-swatch{width:14px;height:3px;border-radius:1px}

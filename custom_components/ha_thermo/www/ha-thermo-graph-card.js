@@ -21,7 +21,10 @@ import {
   callWS,
   todayKey,
   HISTORY_SERIES_COLORS,
-} from "./ha-thermo-common.js?v=0.3.11";
+  bindHistoryChartResize,
+  measureHistoryChartHost,
+  unbindHistoryChartResize,
+} from "./ha-thermo-common.js?v=0.3.12";
 
 const DEFAULT_CONFIG = () => ({
   title: "Grafico",
@@ -82,6 +85,31 @@ class HaThermoGraphCard extends HTMLElement {
 
   static getConfigElement() {
     return document.createElement("ha-thermo-graph-card-editor");
+  }
+
+  static getGridOptions() {
+    return {
+      rows: 3,
+      columns: 6,
+      min_rows: 2,
+      max_rows: 10,
+      min_columns: 3,
+      max_columns: 12,
+    };
+  }
+
+  static getLayoutOptions() {
+    return {
+      grid_rows: 3,
+      grid_columns: 6,
+      grid_min_rows: 2,
+      grid_max_rows: 10,
+    };
+  }
+
+  disconnectedCallback() {
+    const host = this.shadowRoot?.querySelector("#chart-host");
+    unbindHistoryChartResize(host);
   }
 
   setConfig(config) {
@@ -245,15 +273,15 @@ class HaThermoGraphCard extends HTMLElement {
       ? `<div class="empty">${this._error ? esc(this._error) : "Caricamento…"}</div>`
       : !this._climateEntity()
         ? `<div class="empty">Collega il termostato (climate) con la matita</div>`
-        : `<div class="chart-wrap" id="chart-host" style="min-height:${height}px"><div class="empty">Caricamento storico…</div></div>`;
+        : `<div class="chart-wrap" id="chart-host" style="min-height:${height}px;height:100%"><div class="empty">Caricamento storico…</div></div>`;
     this.shadowRoot.innerHTML = `<style>
-      :host{display:block}
-      .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:var(--ha-card-border-radius,12px);border:var(--ha-card-border-width,1px) solid var(--ha-card-border-color,var(--divider-color,transparent));box-shadow:var(--ha-card-box-shadow,none);padding:16px}
+      :host{display:block;height:100%;box-sizing:border-box}
+      .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:var(--ha-card-border-radius,12px);border:var(--ha-card-border-width,1px) solid var(--ha-card-border-color,var(--divider-color,transparent));box-shadow:var(--ha-card-box-shadow,none);padding:16px;display:flex;flex-direction:column;box-sizing:border-box;height:100%;min-height:100%}
       .head{margin-bottom:8px}
       .title{font-weight:600;font-size:1.05rem}
       .sub{font-size:0.75rem;color:var(--secondary-text-color);margin-top:2px}
-      .chart-wrap{position:relative;width:100%}
-      .curve{width:100%;display:block}
+      .chart-wrap{position:relative;width:100%;box-sizing:border-box;flex:1 1 auto}
+      .curve{display:block;vertical-align:top}
       .hist-legend{display:flex;flex-direction:column;gap:6px;margin-top:8px;font-size:0.8rem}
       .hist-legend-item{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
       .hist-swatch{width:18px;height:3px;border-radius:1px;flex-shrink:0}
@@ -278,8 +306,16 @@ class HaThermoGraphCard extends HTMLElement {
   _paintChart() {
     const host = this.shadowRoot?.querySelector("#chart-host");
     if (!host || !this._chartModel) return;
+    const fb = this._config.height || 220;
+    const { width, height } = measureHistoryChartHost(host, fb);
+    this._chartModel.width = width;
+    this._chartModel.height = height;
     host.innerHTML = renderHistoryChartBlock(this._chartModel, this._visibility);
     wireHistoryChartUI(host, this._chartModel, this._visibility);
+    bindHistoryChartResize(host, {
+      getModel: () => this._chartModel,
+      onResize: () => this._paintChart(),
+    });
   }
 
   async _renderChart() {
@@ -336,7 +372,6 @@ class HaThermoGraphCard extends HTMLElement {
       start,
       end,
       spanHours: hours,
-      width: 480,
       height,
       minY,
       maxY,
