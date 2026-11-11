@@ -9,13 +9,16 @@ import {
   getZoneOptions,
   profileOptions,
   fetchRecorderHistory,
-  assembleHistorySeries,
+  buildClimateHistorySeries,
+  resolvePhysicalClimateEntity,
+  deviceClimateReadout,
   renderHistoryChartBlock,
   wireHistoryChartUI,
   yDomainHistory,
+  HistoryStreamAccumulator,
   callWS,
   todayKey,
-} from "./ha-thermo-common.js?v=0.3.9";
+} from "./ha-thermo-common.js?v=0.3.10";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -30,11 +33,13 @@ class HaThermoCard extends HTMLElement {
     this._unsubs = [];
     this._timer = null;
     this._started = false;
-    this._weeklyOpen = false;
     this._prevHvacMode = null;
     this._chartModel = null;
-    this._chartVisibility = { current: true, target: true };
     this._chartTimer = null;
+    this._historyStream = null;
+    this._historyAccumulator = null;
+    this._plottedClimateId = null;
+    this._lastByEntity = null;
   }
 
   static getStubConfig(hass, entities) {
@@ -51,12 +56,22 @@ class HaThermoCard extends HTMLElement {
     this._config = {
       title: "Termostato",
       show_graph: true,
+      show_graph_current: true,
+      show_graph_target: true,
       show_slider: true,
-      show_weekly: true,
       show_status: true,
       ...config,
     };
     this._render();
+    if (this._hass) this._refreshMiniChart();
+  }
+
+  _chartVisibility() {
+    const cfg = this._config;
+    return {
+      current: cfg.show_graph_current !== false,
+      target: cfg.show_graph_target !== false,
+    };
   }
 
   set hass(hass) {
@@ -108,7 +123,8 @@ class HaThermoCard extends HTMLElement {
     try {
       const unsub = await this._hass.connection.subscribeEvents((ev) => {
         const zone = this._zone();
-        if (zone && ev?.data?.entity_id === zone.climate_entity) this._scheduleMiniChart();
+        const climateId = resolvePhysicalClimateEntity(this._hass, zone, this._config);
+        if (zone && ev?.data?.entity_id === climateId) this._onLiveClimateUpdate(ev);
       }, "state_changed");
       this._unsubs.push(unsub);
     } catch (e) {}
@@ -131,6 +147,93 @@ class HaThermoCard extends HTMLElement {
     await this._refreshMiniChart();
   }
 
+  _climatePlotId(zone) {
+    return resolvePhysicalClimateEntity(this._hass, zone, this._config);
+  }
+
+  _onLiveClimateUpdate(ev) {
+    if (!this._chartModel?.series) {
+      this._scheduleMiniChart();
+      return;
+    }
+    const zone = this._zone();
+    const climateId = this._climatePlotId(zone);
+    if (!climateId) return;
+    if (ev?.data?.new_state) {
+      const ns = ev.data.new_state;
+      const row = {
+        s: ns.state,
+        a: { ...(ns.attributes || {}) },
+        lu: Math.floor(new Date(ns.last_updated).getTime() / 1000),
+      };
+      let rows = this._historyAccumulator?.snapshot()?.[climateId] || this._lastByEntity?.[climateId] || [];
+      const last = rows[rows.length - 1];
+      if (!last || last.lu !== row.lu) rows = rows.concat(row);
+      if (!this._historyAccumulator) this._historyAccumulator = new HistoryStreamAccumulator(24);
+      this._historyAccumulator._data = { [climateId]: rows };
+    }
+    const byEntity = {
+      [climateId]: this._historyAccumulator?.snapshot()?.[climateId] || this._lastByEntity?.[climateId] || [],
+    };
+    const series = buildClimateHistorySeries(this._hass, byEntity, climateId, {
+      includeCurrent: true,
+      includeTarget: true,
+    });
+    this._chartModel.series = series;
+    const allY = series.flatMap((s) => s.points.map((p) => p.y));
+    const domain = yDomainHistory(allY);
+    this._chartModel.minY = domain.min;
+    this._chartModel.maxY = domain.max;
+    this._chartModel.end = Date.now();
+    this._paintMiniChart();
+    this._updateTempReadout(zone, climateId);
+  }
+
+  _paintMiniChart() {
+    const host = this.shadowRoot?.querySelector("#mini-chart-host");
+    if (!host || !this._chartModel) return;
+    host.innerHTML = renderHistoryChartBlock(this._chartModel, this._chartVisibility());
+    wireHistoryChartUI(host, this._chartModel, this._chartVisibility());
+  }
+
+  _updateTempReadout(zone, climateId) {
+    const ro = deviceClimateReadout(this._hass, climateId);
+    const ambient = this.shadowRoot?.querySelector(".temp-readonly .ambient, .temp-display");
+    const setpoint = this.shadowRoot?.querySelector(".temp-readonly .setpoint");
+    const slider = this.shadowRoot?.querySelector("input[data-action='slider']");
+    if (ambient && ro.current != null) ambient.textContent = formatTemp(ro.current);
+    if (setpoint && ro.target != null) setpoint.textContent = `${formatTemp(ro.target)} setpoint`;
+    if (slider && ro.target != null) slider.value = ro.target;
+  }
+
+  async _ensureHistoryStream(climateId, hours) {
+    if (!this._hass?.connection?.subscribeMessage || this._plottedClimateId === climateId) return;
+    this._plottedClimateId = climateId;
+    this._historyAccumulator = new HistoryStreamAccumulator(hours);
+    const end = Date.now();
+    const start = end - hours * 3600000;
+    try {
+      const unsub = await this._hass.connection.subscribeMessage(
+        (msg) => {
+          this._historyAccumulator.merge(msg);
+          this._onLiveClimateUpdate();
+        },
+        {
+          type: "history/stream",
+          entity_ids: [climateId],
+          start_time: new Date(start).toISOString(),
+          end_time: new Date(end).toISOString(),
+          minimal_response: true,
+          no_attributes: false,
+          significant_changes_only: false,
+        },
+      );
+      this._unsubs.push(unsub);
+    } catch (e) {
+      /* optional */
+    }
+  }
+
   async _refreshMiniChart() {
     const zone = this._zone();
     const cfg = this._config;
@@ -140,17 +243,19 @@ class HaThermoCard extends HTMLElement {
     const hours = 24;
     const end = Date.now();
     const start = end - hours * 3600000;
-    const climateId = zone.climate_entity;
+    const climateId = this._climatePlotId(zone);
+    if (!climateId) return;
     const byEntity = await fetchRecorderHistory(this._hass, [climateId], start, end);
-    const series = assembleHistorySeries({
-      hass: this._hass,
-      byEntity,
-      climateId,
-      sensorIds: [],
-      includeCurrent: true,
-      includeTarget: true,
+    this._lastByEntity = byEntity;
+    if (!this._historyAccumulator) this._historyAccumulator = new HistoryStreamAccumulator(hours);
+    this._historyAccumulator._data = { ...byEntity };
+    const vis = this._chartVisibility();
+    const series = buildClimateHistorySeries(this._hass, byEntity, climateId, {
+      includeCurrent: vis.current,
+      includeTarget: vis.target,
     });
-    const allY = series.flatMap((s) => s.points.map((p) => p.y));
+    const visSeries = series.filter((s) => vis[s.id] !== false);
+    const allY = visSeries.flatMap((s) => s.points.map((p) => p.y));
     const { min: minY, max: maxY } = yDomainHistory(allY);
     this._chartModel = {
       series,
@@ -162,8 +267,9 @@ class HaThermoCard extends HTMLElement {
       minY,
       maxY,
     };
-    host.innerHTML = renderHistoryChartBlock(this._chartModel, this._chartVisibility);
-    wireHistoryChartUI(host, this._chartModel, this._chartVisibility);
+    this._paintMiniChart();
+    this._updateTempReadout(zone, climateId);
+    await this._ensureHistoryStream(climateId, hours);
   }
 
   _call(msg, okText) {
@@ -199,32 +305,25 @@ class HaThermoCard extends HTMLElement {
     return mode === "off" || st.state === "off";
   }
 
-  _weeklyBlock(zone, profiles, disabled) {
-    if (this._config.show_weekly === false || !zone || !this._weeklyOpen) return "";
-  if (zone.pinned) return "";
-    const schedule = this._data?.weekly_profiles?.[zone.id] || {};
-    const rows = WEEK_DAYS.map((day) => {
-      const value = schedule[day] || "";
-      return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-action="weekly" data-day="${day}" data-zone="${esc(zone.id)}" ${disabled ? "disabled" : ""}>${profileOptions(profiles, value)}</select></label>`;
-    }).join("");
-    return `<div class="weekly-panel"><div class="weekly-title">Settimana</div><div class="weekly-grid">${rows}</div></div>`;
-  }
-
   _tempBlock(zone, cfg, disabled, manual) {
+    const climateId = this._climatePlotId(zone);
+    const ro = deviceClimateReadout(this._hass, climateId);
+    const current = ro.current ?? zone?.current_temperature;
+    const target = ro.target ?? zone?.target_temperature;
     if (manual && cfg.show_slider !== false) {
       return `
         <div class="slider-row">
           <button type="button" data-action="down" ${disabled ? "disabled" : ""}>−</button>
-          <input type="range" min="${zone.min_temp}" max="${zone.max_temp}" step="0.5" value="${zone.target_temperature || 20}" data-action="slider" ${disabled ? "disabled" : ""}>
+          <input type="range" min="${zone.min_temp}" max="${zone.max_temp}" step="0.5" value="${target ?? 20}" data-action="slider" ${disabled ? "disabled" : ""}>
           <button type="button" data-action="up" ${disabled ? "disabled" : ""}>+</button>
         </div>
-        <div class="temp-display">${formatTemp(zone.current_temperature)} <span class="target">→ ${formatTemp(zone.target_temperature)}</span></div>`;
+        <div class="temp-display">${formatTemp(current)} <span class="target">→ ${formatTemp(target)}</span></div>`;
     }
     return `
         <div class="temp-readonly">
-          <span class="ambient">${formatTemp(zone.current_temperature)}</span>
+          <span class="ambient">${formatTemp(current)}</span>
           <span class="sep">·</span>
-          <span class="setpoint">${formatTemp(zone.target_temperature)} setpoint</span>
+          <span class="setpoint">${formatTemp(target)} setpoint</span>
         </div>`;
   }
 
@@ -239,22 +338,19 @@ class HaThermoCard extends HTMLElement {
     const todayProfile = zone && (this._data?.weekly_profiles?.[zone.id]?.[today] || zone.active_profile);
     const todayName = profiles.find((p) => p.id === todayProfile)?.name || zone?.active_profile_name;
 
-    const climateOff = zone ? this._climateIsOff(zone.climate_entity) : true;
-    const weeklyEdit = cfg.show_weekly !== false && zone && !manual;
+    const climateId = zone ? this._climatePlotId(zone) : null;
+    const climateOff = climateId ? this._climateIsOff(climateId) : true;
     const body = !this._data
       ? `<div class="empty">${this._error ? esc(this._error) : "Caricamento…"}</div>`
       : !zone
-        ? `<div class="empty">Scegli il termostato (matita)</div>`
+        ? `<div class="empty">Configura la card (modifica dashboard)</div>`
         : `
       <div class="head">
         <div>
           <div class="title">${esc(cfg.title || zone.name)}</div>
           <div class="sub">${manual ? "Manuale" : "Automatico"} · Oggi: ${esc(todayName || "--")}</div>
         </div>
-        <div class="head-actions">
-          ${weeklyEdit ? `<button type="button" class="icon-btn${this._weeklyOpen ? " active" : ""}" data-action="edit-weekly" title="Settimana"><ha-icon icon="mdi:pencil"></ha-icon></button>` : ""}
-          <button type="button" class="icon-btn" data-action="settings" title="Termostato"><ha-icon icon="mdi:cog"></ha-icon></button>
-        </div>
+        <button type="button" class="icon-btn" data-action="settings" title="Termostato"><ha-icon icon="mdi:cog"></ha-icon></button>
       </div>
       ${cfg.show_graph !== false ? `<div class="mini-chart" id="mini-chart-host"><div class="empty chart-loading">Caricamento grafico…</div></div>` : ""}
       <div class="controls">
@@ -264,7 +360,6 @@ class HaThermoCard extends HTMLElement {
           <button type="button" class="toggle ${manual ? "active" : ""}" data-action="mode-manual">Manuale</button>
           <button type="button" class="toggle power ${climateOff ? "" : "active"}" data-action="power" title="${climateOff ? "Accendi" : "Spegni"}">${climateOff ? "Off" : "On"}</button>
         </div>
-        ${this._weeklyBlock(zone, profiles, disabled)}
       </div>
       ${cfg.show_status !== false ? `<div class="meta">Profilo attivo: ${esc(zone.active_profile_name || "--")}</div>` : ""}`;
 
@@ -272,12 +367,10 @@ class HaThermoCard extends HTMLElement {
       :host{display:block}
       .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:12px;border:1px solid var(--divider-color);padding:16px}
       .head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
-      .head-actions{display:flex;gap:2px;align-items:center}
       .title{font-weight:600}
       .sub{font-size:0.8rem;color:var(--secondary-text-color)}
       .icon-btn{background:none;border:none;padding:6px;cursor:pointer;color:var(--secondary-text-color);border-radius:50%;display:inline-flex}
       .icon-btn:hover{background:rgba(var(--rgb-primary-color,3,169,244),0.12)}
-      .icon-btn.active{color:var(--primary-color);background:rgba(var(--rgb-primary-color,3,169,244),0.16)}
       .controls{display:grid;gap:10px;margin-top:10px}
       .mode-row{display:flex;gap:8px}
       .toggle{flex:1;padding:8px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer;background:var(--card-background-color,#fff);font-size:0.85rem}
@@ -291,16 +384,11 @@ class HaThermoCard extends HTMLElement {
       .temp-readonly .ambient{font-weight:600}
       .temp-readonly .sep,.temp-readonly .setpoint{color:var(--secondary-text-color);font-size:1rem}
       .target{font-size:0.95rem;color:var(--secondary-text-color)}
-      .weekly-panel{margin-top:4px;border-top:1px solid var(--divider-color);padding-top:10px}
-      .weekly-title{font-weight:500;margin-bottom:6px;font-size:0.9rem}
-      .weekly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px;margin-top:6px}
-      .weekly-day{display:grid;gap:2px;font-size:0.8rem}
-      .weekly-day select{padding:4px;border-radius:6px;border:1px solid var(--divider-color)}
       .meta{font-size:0.8rem;color:var(--secondary-text-color);margin-top:8px}
       .mini-chart{position:relative;margin:8px 0 4px}
       .mini-chart .curve{width:100%;height:168px;display:block}
       .hist-legend{display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:0.72rem}
-      .hist-legend-item{display:flex;align-items:center;gap:6px;cursor:pointer}
+      .hist-legend-item{display:inline-flex;align-items:center;gap:6px;margin-right:10px}
       .hist-swatch{width:14px;height:3px;border-radius:1px}
       .chart-tooltip{position:absolute;z-index:2;transform:translateX(-50%);background:var(--card-background-color,#fff);border:1px solid var(--divider-color);border-radius:6px;padding:4px 6px;font-size:0.7rem;box-shadow:0 2px 6px rgba(0,0,0,.12);pointer-events:none}
       .chart-loading{font-size:0.8rem;padding:8px}
@@ -315,12 +403,8 @@ class HaThermoCard extends HTMLElement {
     const zone = this._zone();
     const action = btn.dataset.action;
     if (action === "settings" && zone) {
-      this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: zone.climate_entity }, bubbles: true, composed: true }));
-      return;
-    }
-    if (action === "edit-weekly") {
-      this._weeklyOpen = !this._weeklyOpen;
-      this._render();
+      const eid = this._climatePlotId(zone);
+      this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: eid }, bubbles: true, composed: true }));
       return;
     }
     if (action === "power" && zone) {
@@ -337,12 +421,10 @@ class HaThermoCard extends HTMLElement {
       return;
     }
     if (action === "mode-auto" && zone) {
-      this._weeklyOpen = false;
       this._call({ type: `${DOMAIN}/set_profile`, profile: "__auto__", zones: [zone.id] }, "Automatico");
       return;
     }
     if (action === "mode-manual" && zone) {
-      this._weeklyOpen = false;
       const schedule = this._data?.weekly_profiles?.[zone.id] || {};
       const pid = schedule[todayKey()] || zone.active_profile;
       if (!pid) {
@@ -354,8 +436,9 @@ class HaThermoCard extends HTMLElement {
   }
 
   async _toggleClimatePower(zone) {
-    if (!this._hass || !zone?.climate_entity) return;
-    const eid = zone.climate_entity;
+    if (!this._hass || !zone) return;
+    const eid = this._climatePlotId(zone);
+    if (!eid) return;
     const off = this._climateIsOff(eid);
     try {
       if (off) {
@@ -394,14 +477,6 @@ class HaThermoCard extends HTMLElement {
       );
       return;
     }
-    if (t.matches("select[data-action='weekly']")) {
-      const schedule = { ...(this._data?.weekly_profiles?.[t.dataset.zone] || {}) };
-      schedule[t.dataset.day] = t.value;
-      this._call(
-        { type: `${DOMAIN}/zone/weekly/set`, zone_id: t.dataset.zone, schedule },
-        "Settimana aggiornata",
-      );
-    }
   }
 }
 
@@ -411,43 +486,120 @@ class HaThermoCardEditor extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._config = {};
     this._zones = [];
+    this._profiles = [];
+    this._weekly = {};
+    this._loaded = false;
   }
+
   set hass(h) {
     this._hass = h;
-    if (!this._zones.length) this._loadZones();
+    if (!this._loaded) {
+      this._loaded = true;
+      this._loadIntegration();
+    }
   }
+
   setConfig(config) {
-    this._config = { title: "Termostato", show_graph: true, show_slider: true, show_weekly: true, show_status: true, ...config };
+    this._config = {
+      title: "Termostato",
+      show_graph: true,
+      show_graph_current: true,
+      show_graph_target: true,
+      show_slider: true,
+      show_status: true,
+      ...config,
+    };
     this._render();
   }
-  async _loadZones() {
+
+  _zoneRecord() {
+    return findZone({ zones: this._zones }, this._config.zone);
+  }
+
+  async _loadIntegration() {
     if (!this._hass) return;
     try {
       const d = await callWS(this._hass, { type: `${DOMAIN}/get_config` });
       this._zones = d?.zones || [];
-    } catch (e) {}
+      this._profiles = d?.profiles || [];
+      this._weekly = d?.weekly_profiles || {};
+    } catch (e) {
+      /* ignore */
+    }
     this._render();
   }
-  _render() {
-    this.shadowRoot.innerHTML = `<style>label{display:grid;gap:4px;margin:8px 0;font-size:0.9rem}input,select{padding:6px}</style>
-      <label>Titolo<input data-f="title" value="${esc(this._config.title || "")}"></label>
-      <label>Zona<select data-f="zone">${getZoneOptions(this._zones, false)}</select></label>
-      <label><input type="checkbox" data-f="show_graph" ${this._config.show_graph !== false ? "checked" : ""}> Mostra grafico</label>
-      <label><input type="checkbox" data-f="show_slider" ${this._config.show_slider !== false ? "checked" : ""}> Mostra slider</label>
-      <label><input type="checkbox" data-f="show_weekly" ${this._config.show_weekly !== false ? "checked" : ""}> Mostra settimana</label>`;
-    this.shadowRoot.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => this._emit()));
+
+  async _saveWeekDay(zoneId, day, profileId) {
+    const schedule = { ...(this._weekly[zoneId] || {}) };
+    schedule[day] = profileId;
+    await callWS(this._hass, { type: `${DOMAIN}/zone/weekly/set`, zone_id: zoneId, schedule });
+    this._weekly[zoneId] = schedule;
   }
-  _emit() {
+
+  _render() {
+    const z = this._zoneRecord();
+    const schedule = z ? this._weekly[z.id] || {} : {};
+    const weekRows = z
+      ? WEEK_DAYS.map((day) => {
+          const value = schedule[day] || "";
+          return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-weekly data-day="${day}" data-zone-id="${esc(z.id)}">${profileOptions(this._profiles, value)}</select></label>`;
+        }).join("")
+      : `<p class="hint">Seleziona una zona termostato.</p>`;
+    this.shadowRoot.innerHTML = `<style>
+      .form{display:grid;gap:10px;padding:4px 0;font-size:0.9rem}
+      label{display:grid;gap:4px}
+      input,select{padding:6px;border-radius:6px;border:1px solid var(--divider-color)}
+      .section{font-weight:600;margin-top:8px}
+      .row{display:flex;align-items:center;gap:8px}
+      .weekly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px}
+      .weekly-day{font-size:0.85rem}
+      .hint{color:var(--secondary-text-color);font-size:0.8rem}
+    </style><div class="form">
+      <label>Titolo<input data-f="title" value="${esc(this._config.title || "")}"></label>
+      <label>Termostato (zona HA Thermo)<select data-f="zone">${getZoneOptions(this._zones, false)}</select></label>
+      <div class="section">Grafico</div>
+      <label class="row"><input type="checkbox" data-f="show_graph" ${this._config.show_graph !== false ? "checked" : ""}> Mostra grafico</label>
+      <label class="row"><input type="checkbox" data-f="show_graph_current" ${this._config.show_graph_current !== false ? "checked" : ""}> Serie: temperatura attuale</label>
+      <label class="row"><input type="checkbox" data-f="show_graph_target" ${this._config.show_graph_target !== false ? "checked" : ""}> Serie: temperatura destinataria</label>
+      <div class="section">Termostato</div>
+      <label class="row"><input type="checkbox" data-f="show_slider" ${this._config.show_slider !== false ? "checked" : ""}> Slider in Manuale</label>
+      <label class="row"><input type="checkbox" data-f="show_status" ${this._config.show_status !== false ? "checked" : ""}> Mostra profilo attivo</label>
+      <div class="section">Settimana (salvata su integrazione)</div>
+      <div class="weekly-grid">${weekRows}</div>
+    </div>`;
+    const zoneSel = this.shadowRoot.querySelector('[data-f="zone"]');
+    if (zoneSel && this._config.zone) zoneSel.value = this._config.zone;
+    this.shadowRoot.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => this._emitConfig()));
+    this.shadowRoot.querySelectorAll("[data-weekly]").forEach((el) =>
+      el.addEventListener("change", () => this._onWeeklyChange(el)),
+    );
+  }
+
+  _emitConfig() {
     const g = (k) => this.shadowRoot.querySelector(`[data-f="${k}"]`);
+    const prevZone = this._config.zone;
     const config = {
       ...this._config,
       title: g("title")?.value,
       zone: g("zone")?.value,
       show_graph: g("show_graph")?.checked,
+      show_graph_current: g("show_graph_current")?.checked,
+      show_graph_target: g("show_graph_target")?.checked,
       show_slider: g("show_slider")?.checked,
-      show_weekly: g("show_weekly")?.checked,
+      show_status: g("show_status")?.checked,
     };
+    this._config = config;
+    if (config.zone !== prevZone) this._render();
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+  }
+
+  async _onWeeklyChange(el) {
+    if (!this._hass) return;
+    try {
+      await this._saveWeekDay(el.dataset.zoneId, el.dataset.day, el.value);
+    } catch (e) {
+      /* ignore */
+    }
   }
 }
 

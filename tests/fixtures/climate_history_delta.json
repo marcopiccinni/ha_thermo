@@ -1,0 +1,7 @@
+[
+  { "s": "heat", "a": { "temperature": 18, "current_temperature": 19.5 }, "lu": 1731200000 },
+  { "s": "heat", "a": { "current_temperature": 19 }, "lu": 1731203600 },
+  { "s": "heat", "a": { "temperature": 19 }, "lu": 1731207200 },
+  { "s": "heat", "a": { "current_temperature": 18.5, "temperature": 18.5 }, "lu": 1731210800 },
+  { "s": "heat", "a": { "temperature": 18 }, "lu": 1731214400 }
+]

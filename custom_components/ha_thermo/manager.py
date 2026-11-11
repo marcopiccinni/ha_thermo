@@ -895,7 +895,15 @@ class ThermoManager:
                     return float(state.state)
                 except (TypeError, ValueError):
                     pass
-        return self._climate_target(zone)
+        state = self.hass.states.get(zone.climate_entity)
+        if state and state.state not in {STATE_UNAVAILABLE, STATE_UNKNOWN, "off"}:
+            value = state.attributes.get("current_temperature")
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    pass
+        return None
 
     def target_temperature(self, zone_id: str) -> float | None:
         """Get effective target."""

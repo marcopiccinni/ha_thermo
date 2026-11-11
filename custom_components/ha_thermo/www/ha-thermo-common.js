@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.3.9";
+export const INTEGRATION_VERSION = "0.3.10";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -115,28 +115,77 @@ export const parseRoomSensorList = (value) => {
   .filter((s) => s.startsWith("sensor."));
 };
 
+const CLIMATE_HISTORY_DOMAINS = new Set(["climate", "humidifier", "water_heater"]);
+
 const _tsFromState = (state) => {
   if (!state) return null;
-  if (state.last_changed) return new Date(state.last_changed).getTime();
-  if (state.last_updated) return new Date(state.last_updated).getTime();
   if (state.lu != null) return Number(state.lu) * 1000;
+  if (state.last_updated) return new Date(state.last_updated).getTime();
+  if (state.last_changed) return new Date(state.last_changed).getTime();
   if (state.lc != null) return Number(state.lc) * 1000;
   return null;
+};
+
+export const resolvePhysicalClimateEntity = (hass, zone, config = {}) => {
+  const candidates = [config.climate_entity, zone?.climate_entity, config.zone].map((v) => String(v || "").trim()).filter(Boolean);
+  for (const id of candidates) {
+    if (!id.startsWith("climate.")) continue;
+    return id;
+  }
+  return null;
+};
+
+export const deviceClimateReadout = (hass, climateEntityId) => {
+  if (!hass || !climateEntityId) return { current: null, target: null };
+  return {
+    current: liveClimateValue(hass, climateEntityId, "current"),
+    target: liveClimateValue(hass, climateEntityId, "target"),
+  };
 };
 
 export const normalizeHistoryStates = (states) => {
   if (!Array.isArray(states)) return [];
   return states.map((raw) => {
-    if (raw.last_changed || raw.last_updated) return raw;
-    const lu = raw.lu != null ? Number(raw.lu) * 1000 : null;
-    const lc = raw.lc != null ? Number(raw.lc) * 1000 : lu;
+    const attrs = raw.a ?? raw.attributes ?? {};
+    const luSec = raw.lu != null ? Number(raw.lu) : null;
+    const lcSec = raw.lc != null ? Number(raw.lc) : luSec;
+    const luIso = luSec != null ? new Date(luSec * 1000).toISOString() : raw.last_updated;
+    const lcIso = lcSec != null ? new Date(lcSec * 1000).toISOString() : raw.last_changed;
+    if (raw.last_changed || raw.last_updated) {
+      return {
+        ...raw,
+        state: raw.s ?? raw.state,
+        attributes: attrs,
+        lu: luSec ?? (raw.last_updated ? new Date(raw.last_updated).getTime() / 1000 : undefined),
+        lc: lcSec,
+      };
+    }
     return {
       state: raw.s ?? raw.state,
-      last_changed: lc ? new Date(lc).toISOString() : undefined,
-      last_updated: lu ? new Date(lu).toISOString() : undefined,
-      attributes: raw.a ?? raw.attributes ?? {},
+      last_changed: lcIso,
+      last_updated: luIso,
+      attributes: attrs,
+      lu: luSec,
+      lc: lcSec,
     };
   });
+};
+
+/** Forward-merge partial attribute deltas (HA climate history / stream). */
+export const expandHistoryStates = (entityId, states) => {
+  const domain = String(entityId || "").split(".")[0];
+  const useLu = CLIMATE_HISTORY_DOMAINS.has(domain);
+  const normalized = normalizeHistoryStates(states);
+  const expanded = [];
+  let attrs = {};
+  for (const raw of normalized) {
+    const delta = raw.attributes || {};
+    if (delta && Object.keys(delta).length) attrs = { ...attrs, ...delta };
+    const ms = useLu ? _tsFromState(raw) : _tsFromState(raw);
+    if (ms == null) continue;
+    expanded.push({ state: raw.state, attributes: { ...attrs }, _ms: ms });
+  }
+  return expanded;
 };
 
 /** @param {unknown} raw @param {string[]} entityIds */
@@ -197,20 +246,40 @@ export const sensorTempFromState = (state) => {
   return n;
 };
 
-const _historyPoints = (states, valueFn) => {
+export const historyPointsFromExpanded = (expanded, valueFn) => {
   const points = [];
-  for (const s of states || []) {
+  let prevY = NaN;
+  for (const s of expanded || []) {
     const y = valueFn(s);
-    const x = _tsFromState(s);
-    if (x == null || Number.isNaN(y)) continue;
-    points.push({ x, y });
+    if (Number.isNaN(y)) continue;
+    if (!points.length || y !== prevY) {
+      points.push({ x: s._ms, y });
+      prevY = y;
+    }
   }
   return points;
 };
 
-export const historySetpointPoints = (states) => _historyPoints(states, climateSetpointFromState);
-export const historyClimateCurrentPoints = (states) => _historyPoints(states, climateCurrentFromState);
-export const historySensorPoints = (states) => _historyPoints(states, sensorTempFromState);
+export const historySetpointPoints = (states, entityId) =>
+  historyPointsFromExpanded(expandHistoryStates(entityId, states), climateSetpointFromState);
+
+export const historyClimateCurrentPoints = (states, entityId) =>
+  historyPointsFromExpanded(expandHistoryStates(entityId, states), climateCurrentFromState);
+
+export const historySensorPoints = (states) => {
+  const points = [];
+  let prevY = NaN;
+  for (const raw of normalizeHistoryStates(states)) {
+    const y = sensorTempFromState(raw);
+    const x = _tsFromState(raw);
+    if (x == null || Number.isNaN(y)) continue;
+    if (!points.length || y !== prevY) {
+      points.push({ x, y });
+      prevY = y;
+    }
+  }
+  return points;
+};
 
 export const yDomainPadded = (values, minOverride, maxOverride, minSpan = 1.5) => {
   const nums = values.filter((v) => v != null && !Number.isNaN(v));
@@ -305,20 +374,133 @@ export const liveClimateValue = (hass, entityId, kind) => {
 
 export async function fetchRecorderHistory(hass, entityIds, startMs, endMs) {
   if (!hass || !entityIds?.length) return {};
+  const needsAttrs = entityIds.some((eid) => CLIMATE_HISTORY_DOMAINS.has(String(eid).split(".")[0]));
   try {
     const raw = await hass.callWS({
       type: "history/history_during_period",
       start_time: new Date(startMs).toISOString(),
       end_time: new Date(endMs).toISOString(),
       entity_ids: entityIds,
+      include_start_time_state: true,
       minimal_response: false,
-      no_attributes: false,
+      no_attributes: !needsAttrs,
       significant_changes_only: false,
     });
     return historyByEntity(raw, entityIds);
   } catch (e) {
     return {};
   }
+}
+
+export class HistoryStreamAccumulator {
+  constructor(hoursToShow) {
+    this._hours = hoursToShow;
+    this._data = {};
+  }
+
+  merge(message) {
+    if (!message?.states) return this._data;
+    if (!Object.keys(this._data).length) {
+      this._data = { ...message.states };
+      return this._data;
+    }
+    const next = { ...this._data };
+    const purgeBefore = this._hours ? Date.now() / 1000 - this._hours * 3600 : null;
+    for (const [entityId, chunk] of Object.entries(message.states)) {
+      const prev = next[entityId] || [];
+      const merged = prev.concat(chunk || []);
+      merged.sort((a, b) => (a.lu ?? 0) - (b.lu ?? 0));
+      next[entityId] = purgeBefore ? merged.filter((s) => (s.lu ?? 0) >= purgeBefore) : merged;
+    }
+    this._data = next;
+    return this._data;
+  }
+
+  snapshot() {
+    return this._data;
+  }
+}
+
+export const appendLivePoints = (series, hass, climateId) => {
+  if (!series?.length || !hass || !climateId) return series;
+  const now = Date.now();
+  const push = (points, y) => {
+    if (y == null || Number.isNaN(y) || !points) return;
+    const last = points[points.length - 1];
+    if (!last) points.push({ x: now, y });
+    else if (last.y !== y) points.push({ x: now, y });
+  };
+  for (const s of series) {
+    if (s.id === "target") push(s.points, liveClimateValue(hass, climateId, "target"));
+    else if (s.id === "current") push(s.points, liveClimateValue(hass, climateId, "current"));
+    else if (s.id.startsWith("sensor:")) {
+      const eid = s.id.slice(7);
+      push(s.points, liveClimateValue(hass, eid, "sensor"));
+    }
+    if (s.id === "target" || s.id === "current") {
+      s.currentValue = liveClimateValue(hass, climateId, s.id === "target" ? "target" : "current") ?? _lastY(s.points);
+    }
+  }
+  return series;
+};
+
+export function buildClimateHistorySeries(hass, byEntity, climateId, options = {}) {
+  const {
+    sensorIds = [],
+    includeCurrent = true,
+    includeTarget = true,
+    profilePoints = null,
+    colors = {},
+  } = options;
+  const climateHist = byEntity[climateId] || [];
+  const series = [];
+  if (includeTarget) {
+    const points = historySetpointPoints(climateHist, climateId);
+    series.push({
+      id: "target",
+      label: "temperatura destinataria",
+      color: colors.target || HISTORY_SERIES_COLORS.target,
+      points,
+      step: true,
+      currentValue: liveClimateValue(hass, climateId, "target") ?? _lastY(points),
+    });
+  }
+  if (includeCurrent) {
+    const points = historyClimateCurrentPoints(climateHist, climateId);
+    series.push({
+      id: "current",
+      label: "temperatura attuale",
+      color: colors.current || HISTORY_SERIES_COLORS.current,
+      points,
+      step: true,
+      currentValue: liveClimateValue(hass, climateId, "current") ?? _lastY(points),
+    });
+  }
+  sensorIds.forEach((sid, i) => {
+    if (sid === climateId) return;
+    const points = historySensorPoints(byEntity[sid] || []);
+    const label = hass?.states?.[sid]?.attributes?.friendly_name || sid;
+    series.push({
+      id: `sensor:${sid}`,
+      label,
+      color: (colors.sensors && colors.sensors[i]) || HISTORY_SERIES_COLORS.sensors[i % HISTORY_SERIES_COLORS.sensors.length],
+      points,
+      step: true,
+      currentValue: liveClimateValue(hass, sid, "sensor") ?? _lastY(points),
+    });
+  });
+  if (profilePoints?.length) {
+    series.push({
+      id: "profile",
+      label: "profilo programmato",
+      color: colors.profile || HISTORY_SERIES_COLORS.profile,
+      points: profilePoints,
+      step: true,
+      dashed: true,
+      currentValue: null,
+    });
+  }
+  return appendLivePoints(series, hass, climateId);
 }
 
 export function yDomainHistory(values, minOverride, maxOverride) {
@@ -357,65 +539,8 @@ export function xAxisTickMarks(start, end, spanHours) {
   return marks;
 }
 
-export function assembleHistorySeries({
-  hass,
-  byEntity,
-  climateId,
-  sensorIds = [],
-  includeCurrent = true,
-  includeTarget = true,
-  profilePoints = null,
-  colors = {},
-}) {
-  const climateHist = byEntity[climateId] || [];
-  const series = [];
-  if (includeTarget) {
-    const points = historySetpointPoints(climateHist);
-    series.push({
-      id: "target",
-      label: "temperatura destinataria",
-      color: colors.target || HISTORY_SERIES_COLORS.target,
-      points,
-      step: true,
-      currentValue: liveClimateValue(hass, climateId, "target") ?? _lastY(points),
-    });
-  }
-  if (includeCurrent) {
-    const points = historyClimateCurrentPoints(climateHist);
-    series.push({
-      id: "current",
-      label: "temperatura attuale",
-      color: colors.current || HISTORY_SERIES_COLORS.current,
-      points,
-      step: true,
-      currentValue: liveClimateValue(hass, climateId, "current") ?? _lastY(points),
-    });
-  }
-  sensorIds.forEach((sid, i) => {
-    if (sid === climateId) return;
-    const points = historySensorPoints(byEntity[sid] || []);
-    const label = hass?.states?.[sid]?.attributes?.friendly_name || sid;
-    series.push({
-      id: `sensor:${sid}`,
-      label,
-      color: (colors.sensors && colors.sensors[i]) || HISTORY_SERIES_COLORS.sensors[i % HISTORY_SERIES_COLORS.sensors.length],
-      points,
-      step: true,
-      currentValue: liveClimateValue(hass, sid, "sensor") ?? _lastY(points),
-    });
-  });
-  if (profilePoints?.length) {
-    series.push({
-      id: "profile",
-      label: "profilo programmato",
-      color: colors.profile || HISTORY_SERIES_COLORS.profile,
-      points: profilePoints,
-      step: true,
-      dashed: true,
-      currentValue: null,
-    });
-  }
-  return series;
+export function assembleHistorySeries(opts) {
+  return buildClimateHistorySeries(opts.hass, opts.byEntity, opts.climateId, opts);
 }
 
 export function renderHistoryChartSvg({
@@ -487,17 +612,35 @@ export function renderHistoryChartSvg({
 </svg>`;
 }
 
+export const chartVisibilityStorageKey = (cardKind, entityId) =>
+  `ha_thermo:vis:${cardKind}:${String(entityId || "unknown").replace(/[^a-z0-9._-]/gi, "_")}`;
+
+export function loadChartVisibility(storageKey, defaults = {}) {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return { ...defaults };
+    const parsed = JSON.parse(raw);
+    return { ...defaults, ...(parsed && typeof parsed === "object" ? parsed : {}) };
+  } catch (e) {
+    return { ...defaults };
+  }
+}
+
+export function saveChartVisibility(storageKey, visibility) {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(visibility));
+  } catch (e) {
+    /* ignore quota */
+  }
+}
+
 export function renderHistoryLegend(series, visibility = {}) {
   return `<div class="hist-legend">${series
-    .map((s) => {
-      const on = visibility[s.id] !== false;
-      const val = s.currentValue != null ? formatTempLegend(s.currentValue) : "";
-      return `<label class="hist-legend-item" data-legend-series="${esc(s.id)}">
-        <input type="checkbox" data-series-toggle="${esc(s.id)}" ${on ? "checked" : ""} />
-        <span class="hist-swatch" style="background:${esc(s.color)}${s.dashed ? ";opacity:0.65;border-bottom:2px dashed currentColor" : ""}"></span>
-        <span class="hist-label">${esc(s.label)}${val ? ` <strong>${esc(val)}</strong>` : ""}</span>
-      </label>`;
-    })
+    .filter((s) => visibility[s.id] !== false)
+    .map(
+      (s) =>
+        `<span class="hist-legend-item"><span class="hist-swatch" style="background:${esc(s.color)}${s.dashed ? ";opacity:0.65;border-bottom:2px dashed currentColor" : ""}"></span><span class="hist-label">${esc(s.label)}</span></span>`,
+    )
     .join("")}</div>`;
 }
 
@@ -507,21 +650,8 @@ export function renderHistoryChartBlock(model, visibility) {
   return `${svg}${legend}<div class="chart-tooltip" hidden></div>`;
 }
 
-export function wireHistoryChartUI(host, model, visibility, onVisibilityChange) {
+export function wireHistoryChartUI(host, model, visibility) {
   if (!host) return;
-  host.querySelectorAll("[data-series-toggle]").forEach((input) => {
-    input.addEventListener("change", () => {
-      const id = input.getAttribute("data-series-toggle");
-      visibility[id] = input.checked;
-      const paths = host.querySelector(`svg[data-history-chart]`);
-      const path = host.querySelector(`[data-series-path="${id}"]`);
-      if (path) path.style.display = input.checked ? "" : "none";
-      if (onVisibilityChange) onVisibilityChange(id, input.checked);
-      if (paths && model) {
-        host.querySelector(".chart-tooltip")?.setAttribute("hidden", "");
-      }
-    });
-  });
   const svg = host.querySelector("svg[data-history-chart]");
   const tip = host.querySelector(".chart-tooltip");
   const hit = host.querySelector(".chart-hit");

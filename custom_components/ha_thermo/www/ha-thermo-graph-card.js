@@ -2,21 +2,26 @@ import {
   DOMAIN,
   EVENT_TYPES,
   GRAPH_TIME_RANGES,
+  WEEK_DAYS,
+  DAY_LABELS,
   esc,
   findZone,
   getZoneOptions,
+  profileOptions,
   graphHoursToShow,
   parseRoomSensorList,
   profileSchedulePoints,
   fetchRecorderHistory,
-  assembleHistorySeries,
+  buildClimateHistorySeries,
+  resolvePhysicalClimateEntity,
   renderHistoryChartBlock,
   wireHistoryChartUI,
   yDomainHistory,
+  HistoryStreamAccumulator,
   callWS,
   todayKey,
   HISTORY_SERIES_COLORS,
-} from "./ha-thermo-common.js?v=0.3.9";
+} from "./ha-thermo-common.js?v=0.3.10";
 
 const DEFAULT_CONFIG = () => ({
   title: "Grafico",
@@ -28,6 +33,7 @@ const DEFAULT_CONFIG = () => ({
   show_current: true,
   show_target: true,
   show_profile_overlay: false,
+  show_room_sensors: true,
   room_sensors: [],
   color_current: HISTORY_SERIES_COLORS.current,
   color_target: HISTORY_SERIES_COLORS.target,
@@ -50,6 +56,21 @@ class HaThermoGraphCard extends HTMLElement {
     this._chartModel = null;
     this._visibility = { current: true, target: true, profile: false };
     this._historyStream = false;
+    this._historyAccumulator = null;
+    this._lastByEntity = null;
+  }
+
+  _visibilityFromConfig(roomIds = []) {
+    const cfg = this._config;
+    const v = {
+      current: cfg.show_current !== false,
+      target: cfg.show_target !== false,
+      profile: cfg.show_profile_overlay === true,
+    };
+    roomIds.forEach((id) => {
+      v[`sensor:${id}`] = cfg.show_room_sensors !== false;
+    });
+    return v;
   }
 
   static getStubConfig(hass, entities) {
@@ -120,10 +141,7 @@ class HaThermoGraphCard extends HTMLElement {
   }
 
   _climateEntity() {
-    const cfg = this._config;
-    if (cfg.climate_entity) return cfg.climate_entity;
-    const zone = findZone(this._data, cfg.zone);
-    return zone?.climate_entity || (String(cfg.zone || "").startsWith("climate.") ? cfg.zone : null);
+    return resolvePhysicalClimateEntity(this._hass, findZone(this._data, this._config.zone || this._config.climate_entity), this._config);
   }
 
   _zone() {
@@ -148,14 +166,19 @@ class HaThermoGraphCard extends HTMLElement {
     const start = end - hours * 3600000;
     const ids = [climateId, ...roomIds.filter((id) => id !== climateId)];
     try {
+      if (!this._historyAccumulator) this._historyAccumulator = new HistoryStreamAccumulator(hours);
       const unsub = await this._hass.connection.subscribeMessage(
-        () => this._scheduleChartReload(),
+        (msg) => {
+          this._historyAccumulator.merge(msg);
+          this._scheduleChartReload();
+        },
         {
           type: "history/stream",
           entity_ids: ids,
           start_time: new Date(start).toISOString(),
           end_time: new Date(end).toISOString(),
-          minimal_response: false,
+          minimal_response: true,
+          no_attributes: false,
           significant_changes_only: false,
         },
       );
@@ -238,6 +261,8 @@ class HaThermoGraphCard extends HTMLElement {
       .hist-label strong{color:var(--primary-text-color);font-weight:600;margin-left:4px}
       .chart-tooltip{position:absolute;z-index:2;transform:translateX(-50%);background:var(--card-background-color,#fff);border:1px solid var(--divider-color);border-radius:8px;padding:6px 8px;font-size:0.75rem;box-shadow:0 2px 8px rgba(0,0,0,.15);pointer-events:none;white-space:nowrap}
       .empty{color:var(--secondary-text-color);padding:12px 0;text-align:center}
+      .hist-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:0.8rem}
+      .hist-legend-item{display:inline-flex;align-items:center;gap:6px}
     </style><div class="card"><div class="head"><div class="title">${esc(this._config.title || zone?.name || "Grafico")}</div>${sub}</div>${body}</div>`;
   }
 
@@ -271,20 +296,28 @@ class HaThermoGraphCard extends HTMLElement {
     const start = end - hours * 3600000;
     const entityIds = [climateId, ...roomIds.filter((id) => id !== climateId)];
     const byEntity = await fetchRecorderHistory(this._hass, entityIds, start, end);
+    this._lastByEntity = byEntity;
+    if (!this._historyAccumulator) this._historyAccumulator = new HistoryStreamAccumulator(hours);
+    this._historyAccumulator._data = { ...byEntity };
+    const merged = this._historyAccumulator.snapshot();
+    const plotEntity = { ...byEntity };
+    for (const id of entityIds) {
+      if (merged[id]?.length) plotEntity[id] = merged[id];
+    }
 
+    this._visibility = this._visibilityFromConfig(roomIds);
+
+    const showProfile = this._visibility.profile === true;
     let profilePts = null;
-    if (cfg.show_profile_overlay) {
+    if (showProfile) {
       const hourly = zone ? this._profileHourly(zone) : null;
       if (hourly) profilePts = profileSchedulePoints(hourly, start, end);
     }
 
-    const series = assembleHistorySeries({
-      hass: this._hass,
-      byEntity,
-      climateId,
+    const series = buildClimateHistorySeries(this._hass, plotEntity, climateId, {
       sensorIds: roomIds,
-      includeCurrent: cfg.show_current !== false,
-      includeTarget: cfg.show_target !== false,
+      includeCurrent: this._visibility.current,
+      includeTarget: this._visibility.target,
       profilePoints: profilePts,
       colors: {
         current: cfg.color_current,
@@ -293,12 +326,8 @@ class HaThermoGraphCard extends HTMLElement {
       },
     });
 
-    series.forEach((s) => {
-      if (s.id.startsWith("sensor:")) this._visibility[s.id] = this._visibility[s.id] !== false;
-    });
-    if (profilePts) this._visibility.profile = cfg.show_profile_overlay !== false;
-
-    const allY = series.flatMap((s) => s.points.map((p) => p.y));
+    const visSeries = series.filter((s) => this._visibility[s.id] !== false);
+    const allY = visSeries.flatMap((s) => s.points.map((p) => p.y));
     const { min: minY, max: maxY } = yDomainHistory(allY, cfg.min_temp, cfg.max_temp);
     const height = cfg.height || 220;
 
@@ -322,6 +351,8 @@ class HaThermoGraphCardEditor extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._config = DEFAULT_CONFIG();
     this._zones = [];
+    this._profiles = [];
+    this._weekly = {};
     this._loaded = false;
   }
 
@@ -329,7 +360,7 @@ class HaThermoGraphCardEditor extends HTMLElement {
     this._hass = h;
     if (!this._loaded) {
       this._loaded = true;
-      this._loadZones();
+      this._loadIntegration();
     }
   }
 
@@ -338,59 +369,82 @@ class HaThermoGraphCardEditor extends HTMLElement {
     this._render();
   }
 
-  async _loadZones() {
+  _zoneRecord() {
+    return findZone({ zones: this._zones }, this._config.zone);
+  }
+
+  async _loadIntegration() {
     if (!this._hass) return;
     try {
       const d = await callWS(this._hass, { type: `${DOMAIN}/get_config` });
       this._zones = d?.zones || [];
+      this._profiles = d?.profiles || [];
+      this._weekly = d?.weekly_profiles || {};
     } catch (e) {
       /* ignore */
     }
     this._render();
   }
 
+  async _saveWeekDay(zoneId, day, profileId) {
+    const schedule = { ...(this._weekly[zoneId] || {}) };
+    schedule[day] = profileId;
+    await callWS(this._hass, { type: `${DOMAIN}/zone/weekly/set`, zone_id: zoneId, schedule });
+    this._weekly[zoneId] = schedule;
+  }
+
   _render() {
     const c = this._config;
+    const z = this._zoneRecord();
+    const schedule = z ? this._weekly[z.id] || {} : {};
     const rangeOpts = GRAPH_TIME_RANGES.map(
       (r) => `<option value="${r.key}" ${(c.time_range || "48h") === r.key ? "selected" : ""}>${esc(r.label)}</option>`,
     ).join("");
     const zoneOpts = getZoneOptions(this._zones, false);
     const roomVal = Array.isArray(c.room_sensors) ? c.room_sensors.join(", ") : c.room_sensors || "";
+    const weekRows = z
+      ? WEEK_DAYS.map((day) => {
+          const value = schedule[day] || "";
+          return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-weekly data-day="${day}" data-zone-id="${esc(z.id)}">${profileOptions(this._profiles, value)}</select></label>`;
+        }).join("")
+      : `<p class="hint">Seleziona una zona termostato.</p>`;
     this.shadowRoot.innerHTML = `<style>
       .form{display:grid;gap:12px;padding:8px 0}
       label{display:grid;gap:4px;font-size:0.9rem}
       input,select,textarea{padding:6px;border-radius:6px;border:1px solid var(--divider-color);font:inherit}
       .row{display:flex;gap:8px;align-items:center}
+      .section{font-weight:600;margin-top:4px}
+      .weekly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px}
+      .weekly-day{font-size:0.85rem}
       .hint{font-size:0.75rem;color:var(--secondary-text-color)}
     </style><div class="form">
       <label>Titolo<input type="text" data-field="title" value="${esc(c.title || "")}"></label>
       <label>Termostato (zona HA Thermo)<select data-field="zone">${zoneOpts}</select></label>
-      <span class="hint">Oppure imposta <code>climate_entity</code> nel YAML.</span>
-      <label>Sensori temperatura ambiente (opzionale)
-        <textarea data-field="room_sensors" rows="2" placeholder="sensor.sala, sensor.camera">${esc(roomVal)}</textarea>
-      </label>
+      <span class="hint">Storico sul <code>climate_entity</code> fisico della zona. <code>climate_entity</code> in YAML opzionale.</span>
+      <label>Sensori temperatura extra<textarea data-field="room_sensors" rows="2" placeholder="sensor.sala">${esc(roomVal)}</textarea></label>
+      <div class="section">Serie visibili</div>
+      <label class="row"><input type="checkbox" data-field="show_current" ${c.show_current !== false ? "checked" : ""}> temperatura attuale</label>
+      <label class="row"><input type="checkbox" data-field="show_target" ${c.show_target !== false ? "checked" : ""}> temperatura destinataria</label>
+      <label class="row"><input type="checkbox" data-field="show_room_sensors" ${c.show_room_sensors !== false ? "checked" : ""}> sensori extra</label>
+      <label class="row"><input type="checkbox" data-field="show_profile_overlay" ${c.show_profile_overlay === true ? "checked" : ""}> profilo programmato (tratteggio)</label>
       <label>Intervallo<select data-field="time_range">${rangeOpts}</select></label>
-      <label>Altezza grafico (px)<input type="number" data-field="height" min="120" max="480" value="${esc(c.height || 220)}"></label>
-      <div class="row">
-        <label style="flex:1">Y min (vuoto=auto)<input type="number" step="0.5" data-field="min_temp" value="${esc(c.min_temp ?? "")}"></label>
-        <label style="flex:1">Y max<input type="number" step="0.5" data-field="max_temp" value="${esc(c.max_temp ?? "")}"></label>
-      </div>
-      <label class="row"><input type="checkbox" data-field="show_target" ${c.show_target !== false ? "checked" : ""}> Mostra setpoint (storico)</label>
-      <label class="row"><input type="checkbox" data-field="show_current" ${c.show_current !== false ? "checked" : ""}> Mostra temperatura ambiente</label>
-      <label class="row"><input type="checkbox" data-field="show_profile_overlay" ${c.show_profile_overlay === true ? "checked" : ""}> Sovrapponi profilo di oggi (tratteggio)</label>
-      <label>Colore ambiente<input type="text" data-field="color_current" value="${esc(c.color_current || HISTORY_SERIES_COLORS.current)}"></label>
-      <label>Colore setpoint<input type="text" data-field="color_target" value="${esc(c.color_target || HISTORY_SERIES_COLORS.target)}"></label>
-      <label>Colore profilo<input type="text" data-field="color_profile" value="${esc(c.color_profile || HISTORY_SERIES_COLORS.profile)}"></label>
+      <label>Altezza (px)<input type="number" data-field="height" min="120" max="480" value="${esc(c.height || 220)}"></label>
+      <div class="row">Y auto: min<input type="number" step="0.5" data-field="min_temp" value="${esc(c.min_temp ?? "")}"> max<input type="number" step="0.5" data-field="max_temp" value="${esc(c.max_temp ?? "")}"></div>
+      <label>Colore attuale<input data-field="color_current" value="${esc(c.color_current || HISTORY_SERIES_COLORS.current)}"></label>
+      <label>Colore destinataria<input data-field="color_target" value="${esc(c.color_target || HISTORY_SERIES_COLORS.target)}"></label>
+      <label>Colore profilo<input data-field="color_profile" value="${esc(c.color_profile || HISTORY_SERIES_COLORS.profile)}"></label>
+      <div class="section">Settimana (integrazione)</div>
+      <div class="weekly-grid">${weekRows}</div>
     </div>`;
     const zoneSel = this.shadowRoot.querySelector('[data-field="zone"]');
     if (zoneSel && c.zone) zoneSel.value = c.zone;
-    this.shadowRoot.querySelectorAll("input,select,textarea").forEach((el) =>
-      el.addEventListener("change", () => this._changed()),
-    );
+    this.shadowRoot.querySelectorAll("[data-field]").forEach((el) => el.addEventListener("change", () => this._changed()));
+    this.shadowRoot.querySelectorAll("[data-weekly]").forEach((el) => el.addEventListener("change", () => this._onWeeklyChange(el)));
   }
 
   _changed() {
     const get = (f) => this.shadowRoot.querySelector(`[data-field="${f}"]`);
+    const prevZone = this._config.zone;
     const config = {
       ...this._config,
       title: get("title")?.value,
@@ -402,6 +456,7 @@ class HaThermoGraphCardEditor extends HTMLElement {
       room_sensors: parseRoomSensorList(get("room_sensors")?.value),
       show_target: get("show_target")?.checked,
       show_current: get("show_current")?.checked,
+      show_room_sensors: get("show_room_sensors")?.checked,
       show_profile_overlay: get("show_profile_overlay")?.checked,
     };
     const height = Number(get("height")?.value);
@@ -412,7 +467,17 @@ class HaThermoGraphCardEditor extends HTMLElement {
     });
     config.hours_to_show = null;
     this._config = config;
+    if (config.zone !== prevZone) this._render();
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+  }
+
+  async _onWeeklyChange(el) {
+    if (!this._hass) return;
+    try {
+      await this._saveWeekDay(el.dataset.zoneId, el.dataset.day, el.value);
+    } catch (e) {
+      /* ignore */
+    }
   }
 }
 

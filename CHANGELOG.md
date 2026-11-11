@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.10
+
+- **Grafici recorder (fix)**: storico sul **climate fisico** della zona (`zone.climate_entity`); merge degli attributi parziali (come History HA) così i cambi solo su `current_temperature` / `temperature` generano scalini; `significant_changes_only: false`; intestazione card con valori live dal dispositivo (non profilo integrazione). Fix backend `current_temperature` su attributo climate.
+- **Legenda**: solo nome serie e colore (niente valori numerici né checkbox; niente toggle).
+- **Configurazione**: tutto nell’**editor Lovelace** (zona/climate, serie grafico, sensori, intervallo, colori, **settimana Lun–Dom** con salvataggio `zone/weekly/set`); nessuna matita custom in card.
+
 ## 0.3.9
 
 - **Grafici allineati allo storico HA**: mini grafico card controllo e **HA Thermo Grafico** usano il **recorder** (`history_during_period` con attributi completi, `significant_changes_only: false`), non più la curva profilo 0–23h.
