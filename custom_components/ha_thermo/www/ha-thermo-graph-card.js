@@ -19,7 +19,7 @@ import {
   yDomainPadded,
   callWS,
   todayKey,
-} from "./ha-thermo-common.js?v=0.3.7";
+} from "./ha-thermo-common.js?v=0.3.8";
 
 const DEFAULT_COLORS = {
   current: "var(--primary-color)",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.8
+
+- **Card controllo – layout**: prima temperatura (slider solo in **Manuale**; in **Automatico** ambiente e setpoint in sola lettura), sotto **Automatico / Manuale** e pulsante **On/Off** sul climate (`turn_on` / `turn_off` o `hvac_mode`).
+- **Settimana**: griglia giorni nascosta di default; si apre dall’icona **matita** (`mdi:pencil`) in intestazione; etichetta ridotta a «Settimana» (niente hint impostazioni).
+- **Icone** intestazione: matita (pianificazione) e ingranaggio (more-info climate).
+
 ## 0.3.7
 
 - **Card grafico**: storico reale dal **recorder** di Home Assistant (`history/history_during_period` con attributi), non più parsing errato di `state` sul climate (modalità HVAC → serie vuota) né risposta history indicizzata con `[0]`.

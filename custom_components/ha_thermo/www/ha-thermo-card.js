@@ -11,7 +11,7 @@ import {
   renderChart,
   callWS,
   todayKey,
-} from "./ha-thermo-common.js?v=0.3.7";
+} from "./ha-thermo-common.js?v=0.3.8";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -26,6 +26,8 @@ class HaThermoCard extends HTMLElement {
     this._unsubs = [];
     this._timer = null;
     this._started = false;
+    this._weeklyOpen = false;
+    this._prevHvacMode = null;
   }
 
   static getStubConfig(hass, entities) {
@@ -139,14 +141,40 @@ class HaThermoCard extends HTMLElement {
     return (this._data?.profiles || []).find((p) => p.id === id);
   }
 
+  _climateIsOff(entityId) {
+    const st = this._hass?.states?.[entityId];
+    if (!st) return true;
+    const mode = st.attributes?.hvac_mode ?? st.state;
+    return mode === "off" || st.state === "off";
+  }
+
   _weeklyBlock(zone, profiles, disabled) {
-    if (this._config.show_weekly === false || !zone || zone.pinned) return "";
+    if (this._config.show_weekly === false || !zone || !this._weeklyOpen) return "";
+  if (zone.pinned) return "";
     const schedule = this._data?.weekly_profiles?.[zone.id] || {};
     const rows = WEEK_DAYS.map((day) => {
       const value = schedule[day] || "";
       return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-action="weekly" data-day="${day}" data-zone="${esc(zone.id)}" ${disabled ? "disabled" : ""}>${profileOptions(profiles, value)}</select></label>`;
     }).join("");
-    return `<details class="weekly" open><summary>Settimana (profili condivisi)</summary><p class="hint">Gestisci le curve in Impostazioni → HA Thermo → Configura → Profili.</p><div class="weekly-grid">${rows}</div></details>`;
+    return `<div class="weekly-panel"><div class="weekly-title">Settimana</div><div class="weekly-grid">${rows}</div></div>`;
+  }
+
+  _tempBlock(zone, cfg, disabled, manual) {
+    if (manual && cfg.show_slider !== false) {
+      return `
+        <div class="slider-row">
+          <button type="button" data-action="down" ${disabled ? "disabled" : ""}>−</button>
+          <input type="range" min="${zone.min_temp}" max="${zone.max_temp}" step="0.5" value="${zone.target_temperature || 20}" data-action="slider" ${disabled ? "disabled" : ""}>
+          <button type="button" data-action="up" ${disabled ? "disabled" : ""}>+</button>
+        </div>
+        <div class="temp-display">${formatTemp(zone.current_temperature)} <span class="target">→ ${formatTemp(zone.target_temperature)}</span></div>`;
+    }
+    return `
+        <div class="temp-readonly">
+          <span class="ambient">${formatTemp(zone.current_temperature)}</span>
+          <span class="sep">·</span>
+          <span class="setpoint">${formatTemp(zone.target_temperature)} setpoint</span>
+        </div>`;
   }
 
   _render() {
@@ -160,6 +188,8 @@ class HaThermoCard extends HTMLElement {
     const todayProfile = zone && (this._data?.weekly_profiles?.[zone.id]?.[today] || zone.active_profile);
     const todayName = profiles.find((p) => p.id === todayProfile)?.name || zone?.active_profile_name;
 
+    const climateOff = zone ? this._climateIsOff(zone.climate_entity) : true;
+    const weeklyEdit = cfg.show_weekly !== false && zone && !manual;
     const body = !this._data
       ? `<div class="empty">${this._error ? esc(this._error) : "Caricamento…"}</div>`
       : !zone
@@ -170,22 +200,19 @@ class HaThermoCard extends HTMLElement {
           <div class="title">${esc(cfg.title || zone.name)}</div>
           <div class="sub">${manual ? "Manuale" : "Automatico"} · Oggi: ${esc(todayName || "--")}</div>
         </div>
-        <button type="button" class="icon-btn" data-action="settings" title="Termostato HA">⚙️</button>
+        <div class="head-actions">
+          ${weeklyEdit ? `<button type="button" class="icon-btn${this._weeklyOpen ? " active" : ""}" data-action="edit-weekly" title="Settimana"><ha-icon icon="mdi:pencil"></ha-icon></button>` : ""}
+          <button type="button" class="icon-btn" data-action="settings" title="Termostato"><ha-icon icon="mdi:cog"></ha-icon></button>
+        </div>
       </div>
       ${cfg.show_graph !== false ? renderChart(zone, this._activeProfile(zone), this._data) : ""}
       <div class="controls">
+        ${this._tempBlock(zone, cfg, disabled, manual)}
         <div class="mode-row">
           <button type="button" class="toggle ${manual ? "" : "active"}" data-action="mode-auto">Automatico</button>
           <button type="button" class="toggle ${manual ? "active" : ""}" data-action="mode-manual">Manuale</button>
+          <button type="button" class="toggle power ${climateOff ? "" : "active"}" data-action="power" title="${climateOff ? "Accendi" : "Spegni"}">${climateOff ? "Off" : "On"}</button>
         </div>
-        ${cfg.show_slider !== false ? `
-        <div class="slider-row">
-          <button type="button" data-action="down" ${disabled ? "disabled" : ""}>−</button>
-          <input type="range" min="${zone.min_temp}" max="${zone.max_temp}" step="0.5" value="${zone.target_temperature || 20}" data-action="slider" ${disabled ? "disabled" : ""}>
-          <button type="button" data-action="up" ${disabled ? "disabled" : ""}>+</button>
-        </div>
-        <div class="temp-display">${formatTemp(zone.current_temperature)} <span class="target">→ ${formatTemp(zone.target_temperature)}</span></div>
-        ` : ""}
         ${this._weeklyBlock(zone, profiles, disabled)}
       </div>
       ${cfg.show_status !== false ? `<div class="meta">Profilo attivo: ${esc(zone.active_profile_name || "--")}</div>` : ""}`;
@@ -193,22 +220,28 @@ class HaThermoCard extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>
       :host{display:block}
       .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:12px;border:1px solid var(--divider-color);padding:16px}
-      .head{display:flex;justify-content:space-between;gap:8px}
+      .head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+      .head-actions{display:flex;gap:2px;align-items:center}
       .title{font-weight:600}
       .sub{font-size:0.8rem;color:var(--secondary-text-color)}
-      .icon-btn{background:none;border:none;font-size:1.2rem;cursor:pointer}
-      .controls{display:grid;gap:8px;margin-top:8px}
+      .icon-btn{background:none;border:none;padding:6px;cursor:pointer;color:var(--secondary-text-color);border-radius:50%;display:inline-flex}
+      .icon-btn:hover{background:rgba(var(--rgb-primary-color,3,169,244),0.12)}
+      .icon-btn.active{color:var(--primary-color);background:rgba(var(--rgb-primary-color,3,169,244),0.16)}
+      .controls{display:grid;gap:10px;margin-top:10px}
       .mode-row{display:flex;gap:8px}
-      .toggle{flex:1;padding:8px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer;background:var(--card-background-color,#fff)}
+      .toggle{flex:1;padding:8px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer;background:var(--card-background-color,#fff);font-size:0.85rem}
       .toggle.active{background:var(--primary-color);color:#fff;border-color:var(--primary-color)}
+      .toggle.power{flex:0 0 3.2rem;font-weight:600}
       .slider-row{display:flex;align-items:center;gap:8px}
       .slider-row button{width:36px;height:36px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer}
       .slider-row input{flex:1}
       .temp-display{text-align:center;font-size:1.4rem;margin:4px 0}
+      .temp-readonly{text-align:center;font-size:1.35rem;margin:6px 0;display:flex;justify-content:center;align-items:baseline;gap:6px;flex-wrap:wrap}
+      .temp-readonly .ambient{font-weight:600}
+      .temp-readonly .sep,.temp-readonly .setpoint{color:var(--secondary-text-color);font-size:1rem}
       .target{font-size:0.95rem;color:var(--secondary-text-color)}
-      .weekly{margin-top:4px;border-top:1px solid var(--divider-color);padding-top:8px}
-      .weekly summary{cursor:pointer;font-weight:500}
-      .hint{font-size:0.75rem;color:var(--secondary-text-color);margin:4px 0}
+      .weekly-panel{margin-top:4px;border-top:1px solid var(--divider-color);padding-top:10px}
+      .weekly-title{font-weight:500;margin-bottom:6px;font-size:0.9rem}
       .weekly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px;margin-top:6px}
       .weekly-day{display:grid;gap:2px;font-size:0.8rem}
       .weekly-day select{padding:4px;border-radius:6px;border:1px solid var(--divider-color)}
@@ -227,6 +260,15 @@ class HaThermoCard extends HTMLElement {
       this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: zone.climate_entity }, bubbles: true, composed: true }));
       return;
     }
+    if (action === "edit-weekly") {
+      this._weeklyOpen = !this._weeklyOpen;
+      this._render();
+      return;
+    }
+    if (action === "power" && zone) {
+      this._toggleClimatePower(zone);
+      return;
+    }
     if (action === "up" || action === "down") {
       const slider = this.shadowRoot.querySelector("input[type=range]");
       if (!slider) return;
@@ -237,10 +279,12 @@ class HaThermoCard extends HTMLElement {
       return;
     }
     if (action === "mode-auto" && zone) {
+      this._weeklyOpen = false;
       this._call({ type: `${DOMAIN}/set_profile`, profile: "__auto__", zones: [zone.id] }, "Automatico");
       return;
     }
     if (action === "mode-manual" && zone) {
+      this._weeklyOpen = false;
       const schedule = this._data?.weekly_profiles?.[zone.id] || {};
       const pid = schedule[todayKey()] || zone.active_profile;
       if (!pid) {
@@ -248,6 +292,36 @@ class HaThermoCard extends HTMLElement {
         return;
       }
       this._call({ type: `${DOMAIN}/set_profile`, profile: pid, zones: [zone.id] }, "Manuale");
+    }
+  }
+
+  async _toggleClimatePower(zone) {
+    if (!this._hass || !zone?.climate_entity) return;
+    const eid = zone.climate_entity;
+    const off = this._climateIsOff(eid);
+    try {
+      if (off) {
+        try {
+          await this._hass.callService("climate", "turn_on", { entity_id: eid });
+        } catch (e1) {
+          const mode = this._prevHvacMode || "heat";
+          await this._hass.callService("climate", "set_hvac_mode", { entity_id: eid, hvac_mode: mode });
+        }
+        this._toast("Acceso");
+      } else {
+        const st = this._hass.states[eid];
+        const mode = st?.attributes?.hvac_mode;
+        if (mode && mode !== "off") this._prevHvacMode = mode;
+        try {
+          await this._hass.callService("climate", "turn_off", { entity_id: eid });
+        } catch (e1) {
+          await this._hass.callService("climate", "set_hvac_mode", { entity_id: eid, hvac_mode: "off" });
+        }
+        this._toast("Spento");
+      }
+      await this._load();
+    } catch (e) {
+      this._toast(e?.message || String(e), true);
     }
   }
 

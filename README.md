@@ -39,7 +39,7 @@ Integrazione custom Home Assistant (HACS) per gestire i termostati tramite profi
 
 ### Controlli (`ha-thermo-card`)
 
-Card per un singolo termostato con slider, profilo, bypass e stato.
+Card per un singolo termostato: grafico profilo di oggi, temperatura, automatico/manuale, accensione climate e settimana (matita in intestazione).
 
 ```yaml
 type: custom:ha-thermo-card
@@ -56,8 +56,8 @@ show_status: true
 | `title` | `Termostato` | Titolo della card. |
 | `zone` | — | Entità `climate` della zona. |
 | `show_graph` | `true` | Mostra il grafico 24h del profilo di oggi. |
-| `show_slider` | `true` | Mostra slider e pulsanti ± (override temperatura). |
-| `show_weekly` | `true` | Pianificazione Lun–Dom (profilo condiviso per giorno). |
+| `show_slider` | `true` | Slider e ± in modalità **Manuale** (in automatico solo lettura). |
+| `show_weekly` | `true` | Abilita icona matita per pianificazione Lun–Dom. |
 | `show_status` | `true` | Mostra profilo attivo. |
 
 Profili condivisi (curve 24h): **Impostazioni → Dispositivi e servizi → HA Thermo → Configura → Profili condivisi**.
