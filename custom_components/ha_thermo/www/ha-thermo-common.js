@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.4.1";
+export const INTEGRATION_VERSION = "0.4.2";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -701,25 +701,46 @@ export function renderHistoryChartBlock(model, visibility) {
   return `${svg}${legend}<div class="chart-tooltip" hidden></div>`;
 }
 
-export function measureHistoryChartHost(host, fallbackHeight = 200) {
-  if (!host) return { width: 480, height: fallbackHeight };
-  const width = Math.max(80, Math.floor(host.clientWidth) || Math.floor(host.getBoundingClientRect().width) || 480);
-  const height = Math.max(100, Math.floor(host.clientHeight) || fallbackHeight);
-  return { width, height };
+export const CHART_HEIGHT_MIN = 100;
+export const CHART_HEIGHT_MAX = 480;
+
+export function clampChartHeight(h, fallback = 200) {
+  const n = Number(h);
+  const v = Number.isFinite(n) ? n : fallback;
+  return Math.min(CHART_HEIGHT_MAX, Math.max(CHART_HEIGHT_MIN, Math.round(v)));
 }
 
-/** ResizeObserver: redraw chart at real CSS px size (no non-uniform SVG scale). */
-export function bindHistoryChartResize(host, { getModel, onResize }) {
+/** Chart width from container; never derive height from the chart host (avoids RO loops). */
+export function measureChartWidth(host, fallbackWidth = 480) {
+  if (!host) return Math.max(80, fallbackWidth);
+  const w = host.clientWidth || host.getBoundingClientRect().width;
+  return Math.max(80, Math.floor(w) || fallbackWidth);
+}
+
+export function measureHistoryChartHost(host, chartHeight = 200) {
+  return {
+    width: measureChartWidth(host),
+    height: clampChartHeight(chartHeight),
+  };
+}
+
+/** ResizeObserver: width only; fixed/bounded height from config + optional card chrome. */
+export function bindHistoryChartResize(host, { getModel, getChartHeight, onResize, observeTarget }) {
   if (!host) return null;
   if (host._haThermoChartRo) return host._haThermoChartRo;
+  const target = observeTarget || host;
   let raf = 0;
   const run = () => {
     raf = 0;
     const model = getModel?.();
     if (!model || !host.isConnected) return;
-    const fb = model.height || 200;
-    const { width, height } = measureHistoryChartHost(host, fb);
-    if (model.width === width && model.height === height) return;
+    const width = measureChartWidth(host);
+    const height = clampChartHeight(getChartHeight?.() ?? model.height ?? 200);
+    const lastW = host._haThermoLastDrawW ?? -1;
+    const lastH = host._haThermoLastDrawH ?? -1;
+    if (Math.abs(width - lastW) < 1 && Math.abs(height - lastH) < 1) return;
+    host._haThermoLastDrawW = width;
+    host._haThermoLastDrawH = height;
     model.width = width;
     model.height = height;
     onResize?.();
@@ -727,8 +748,9 @@ export function bindHistoryChartResize(host, { getModel, onResize }) {
   const ro = new ResizeObserver(() => {
     if (!raf) raf = requestAnimationFrame(run);
   });
-  ro.observe(host);
+  ro.observe(target);
   host._haThermoChartRo = ro;
+  host._haThermoChartRoTarget = target;
   requestAnimationFrame(run);
   return ro;
 }
@@ -737,6 +759,9 @@ export function unbindHistoryChartResize(host) {
   if (host?._haThermoChartRo) {
     host._haThermoChartRo.disconnect();
     host._haThermoChartRo = null;
+    host._haThermoChartRoTarget = null;
+    host._haThermoLastDrawW = null;
+    host._haThermoLastDrawH = null;
   }
 }
 

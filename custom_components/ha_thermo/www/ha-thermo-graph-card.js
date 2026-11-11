@@ -23,13 +23,15 @@ import {
   HISTORY_SERIES_COLORS,
   bindHistoryChartResize,
   measureHistoryChartHost,
+  clampChartHeight,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.4.1";
-import "./ha-thermo-profile-editor.js?v=0.4.1";
+} from "./ha-thermo-common.js?v=0.4.2";
+import "./ha-thermo-profile-editor.js?v=0.4.2";
 
 const DEFAULT_CONFIG = () => ({
   title: "Grafico",
-  height: 220,
+  chart_height: 260,
+  height: 260,
   time_range: "48h",
   hours_to_show: null,
   min_temp: null,
@@ -113,12 +115,26 @@ class HaThermoGraphCard extends HTMLElement {
     unbindHistoryChartResize(host);
   }
 
+  _resolveChartHeight() {
+    const raw = this._config.chart_height ?? this._config.height ?? 260;
+    const cfg = clampChartHeight(raw, 260);
+    const root = this.shadowRoot?.querySelector(".card");
+    if (!root || root.clientHeight < 120) return cfg;
+    const head = this.shadowRoot.querySelector(".head")?.offsetHeight ?? 0;
+    const avail = root.clientHeight - head - 48;
+    if (avail >= 100) return clampChartHeight(Math.min(cfg, avail));
+    return cfg;
+  }
+
   setConfig(config) {
     if (!config) throw new Error("Configurazione non valida");
     const legacyProfile = config.show_profile != null ? config.show_profile : undefined;
+    const h = config.chart_height ?? config.height;
     this._config = {
       ...DEFAULT_CONFIG(),
       ...config,
+      chart_height: h != null ? clampChartHeight(h, 260) : DEFAULT_CONFIG().chart_height,
+      height: h != null ? clampChartHeight(h, 260) : DEFAULT_CONFIG().height,
       show_profile_overlay:
         config.show_profile_overlay ?? legacyProfile ?? DEFAULT_CONFIG().show_profile_overlay,
     };
@@ -274,14 +290,14 @@ class HaThermoGraphCard extends HTMLElement {
       ? `<div class="empty">${this._error ? esc(this._error) : "Caricamento…"}</div>`
       : !this._climateEntity()
         ? `<div class="empty">Collega il termostato (climate) con la matita</div>`
-        : `<div class="chart-wrap" id="chart-host" style="min-height:${height}px;height:100%"><div class="empty">Caricamento storico…</div></div>`;
+        : `<div class="chart-wrap" id="chart-host" style="height:${this._resolveChartHeight()}px"><div class="empty">Caricamento storico…</div></div>`;
     this.shadowRoot.innerHTML = `<style>
-      :host{display:block;height:100%;box-sizing:border-box}
-      .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:var(--ha-card-border-radius,12px);border:var(--ha-card-border-width,1px) solid var(--ha-card-border-color,var(--divider-color,transparent));box-shadow:var(--ha-card-box-shadow,none);padding:16px;display:flex;flex-direction:column;box-sizing:border-box;height:100%;min-height:100%}
+      :host{display:block;height:auto;max-height:100%;box-sizing:border-box}
+      .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:var(--ha-card-border-radius,12px);border:var(--ha-card-border-width,1px) solid var(--ha-card-border-color,var(--divider-color,transparent));box-shadow:var(--ha-card-box-shadow,none);padding:16px;display:flex;flex-direction:column;box-sizing:border-box;min-height:0;max-height:100%;overflow:hidden}
       .head{margin-bottom:8px}
       .title{font-weight:600;font-size:1.05rem}
       .sub{font-size:0.75rem;color:var(--secondary-text-color);margin-top:2px}
-      .chart-wrap{position:relative;width:100%;box-sizing:border-box;flex:1 1 auto}
+      .chart-wrap{position:relative;width:100%;box-sizing:border-box;flex:0 0 auto;min-height:0;max-height:480px;overflow:hidden}
       .curve{display:block;vertical-align:top}
       .hist-legend{display:flex;flex-direction:column;gap:6px;margin-top:8px;font-size:0.8rem}
       .hist-legend-item{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
@@ -307,15 +323,19 @@ class HaThermoGraphCard extends HTMLElement {
   _paintChart() {
     const host = this.shadowRoot?.querySelector("#chart-host");
     if (!host || !this._chartModel) return;
-    const fb = this._config.height || 220;
-    const { width, height } = measureHistoryChartHost(host, fb);
+    const chartH = this._resolveChartHeight();
+    host.style.height = `${chartH}px`;
+    const { width, height } = measureHistoryChartHost(host, chartH);
     this._chartModel.width = width;
     this._chartModel.height = height;
     host.innerHTML = renderHistoryChartBlock(this._chartModel, this._visibility);
     wireHistoryChartUI(host, this._chartModel, this._visibility);
+    const card = this.shadowRoot?.querySelector(".card");
     bindHistoryChartResize(host, {
       getModel: () => this._chartModel,
+      getChartHeight: () => this._resolveChartHeight(),
       onResize: () => this._paintChart(),
+      observeTarget: card || host,
     });
   }
 
@@ -366,14 +386,11 @@ class HaThermoGraphCard extends HTMLElement {
     const visSeries = series.filter((s) => this._visibility[s.id] !== false);
     const allY = visSeries.flatMap((s) => s.points.map((p) => p.y));
     const { min: minY, max: maxY } = yDomainHistory(allY, cfg.min_temp, cfg.max_temp);
-    const height = cfg.height || 220;
-
     this._chartModel = {
       series,
       start,
       end,
       spanHours: hours,
-      height,
       minY,
       maxY,
     };

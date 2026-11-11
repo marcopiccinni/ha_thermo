@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2
+
+- **Fix altezza infinita**: grafici con altezza fissa/configurabile (`chart_height` 180 / 260 px); `ResizeObserver` solo sulla larghezza; niente loop SVG→contenitore; flex `min-height:0` in vista sezioni.
+
 ## 0.4.1
 
 - **Opzioni integrazione – Profili**: menu iniziale tradotto; elenco a **tendina** con riepilogo curva; sottomenu Modifica orari / Duplica / Rinomina / Elimina; ore in **4 sezioni** (`data_entry_flow.section`: Notte, Mattina, Pomeriggio, Sera); messaggio di successo al ritorno elenco; editor card invariato.

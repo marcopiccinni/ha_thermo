@@ -19,10 +19,11 @@ import {
   callWS,
   todayKey,
   bindHistoryChartResize,
+  clampChartHeight,
   measureHistoryChartHost,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.4.1";
-import "./ha-thermo-profile-editor.js?v=0.4.1";
+} from "./ha-thermo-common.js?v=0.4.2";
+import "./ha-thermo-profile-editor.js?v=0.4.2";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -80,6 +81,18 @@ class HaThermoCard extends HTMLElement {
     unbindHistoryChartResize(host);
   }
 
+  _resolveChartHeight() {
+    const cfg = clampChartHeight(this._config.chart_height ?? 180, 180);
+    const root = this.shadowRoot?.querySelector(".card");
+    if (!root || root.clientHeight < 120) return cfg;
+    const head = this.shadowRoot.querySelector(".head")?.offsetHeight ?? 0;
+    const controls = this.shadowRoot.querySelector(".controls")?.offsetHeight ?? 0;
+    const meta = this.shadowRoot.querySelector(".meta")?.offsetHeight ?? 0;
+    const avail = root.clientHeight - head - controls - meta - 36;
+    if (avail >= 100) return clampChartHeight(Math.min(cfg, avail));
+    return cfg;
+  }
+
   setConfig(config) {
     if (!config) throw new Error("Configurazione non valida");
     this._config = {
@@ -89,6 +102,7 @@ class HaThermoCard extends HTMLElement {
       show_graph_target: true,
       show_slider: true,
       show_status: true,
+      chart_height: 180,
       ...config,
     };
     this._render();
@@ -221,14 +235,19 @@ class HaThermoCard extends HTMLElement {
   _paintMiniChart() {
     const host = this.shadowRoot?.querySelector("#mini-chart-host");
     if (!host || !this._chartModel) return;
-    const { width, height } = measureHistoryChartHost(host, 168);
+    const chartH = this._resolveChartHeight();
+    host.style.height = `${chartH}px`;
+    const { width, height } = measureHistoryChartHost(host, chartH);
     this._chartModel.width = width;
     this._chartModel.height = height;
     host.innerHTML = renderHistoryChartBlock(this._chartModel, this._chartVisibility());
     wireHistoryChartUI(host, this._chartModel, this._chartVisibility());
+    const card = this.shadowRoot?.querySelector(".card");
     bindHistoryChartResize(host, {
       getModel: () => this._chartModel,
+      getChartHeight: () => this._resolveChartHeight(),
       onResize: () => this._paintMiniChart(),
+      observeTarget: card || host,
     });
   }
 
@@ -298,7 +317,6 @@ class HaThermoCard extends HTMLElement {
       start,
       end,
       spanHours: hours,
-      height: 168,
       minY,
       maxY,
     };
@@ -384,7 +402,7 @@ class HaThermoCard extends HTMLElement {
         <div class="title">${esc(cfg.title || zone.name)}</div>
         <div class="sub">${manual ? "Manuale" : "Automatico"} · Oggi: ${esc(todayName || "--")}</div>
       </div>
-      ${cfg.show_graph !== false ? `<div class="mini-chart" id="mini-chart-host"><div class="empty chart-loading">Caricamento grafico…</div></div>` : ""}
+      ${cfg.show_graph !== false ? `<div class="mini-chart" id="mini-chart-host" style="height:${clampChartHeight(cfg.chart_height ?? 180, 180)}px"><div class="empty chart-loading">Caricamento grafico…</div></div>` : ""}
       <div class="controls">
         ${this._tempBlock(zone, cfg, disabled, manual)}
         <div class="mode-row">
@@ -415,7 +433,9 @@ class HaThermoCard extends HTMLElement {
       .temp-readonly .sep,.temp-readonly .setpoint{color:var(--secondary-text-color);font-size:1rem}
       .target{font-size:0.95rem;color:var(--secondary-text-color)}
       .meta{font-size:0.8rem;color:var(--secondary-text-color);margin-top:8px}
-      .mini-chart{position:relative;margin:8px 0 4px;width:100%;min-height:168px;height:100%;box-sizing:border-box}
+      :host{display:block;height:auto;max-height:100%;box-sizing:border-box}
+      .card{display:flex;flex-direction:column;min-height:0;max-height:100%;overflow:hidden;box-sizing:border-box}
+      .mini-chart{position:relative;flex:0 0 auto;margin:8px 0 4px;width:100%;min-height:0;max-height:480px;overflow:hidden;box-sizing:border-box}
       .mini-chart .curve{display:block;vertical-align:top}
       .hist-legend{display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:0.72rem}
       .hist-legend-item{display:inline-flex;align-items:center;gap:6px;margin-right:10px}
