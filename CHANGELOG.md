@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.9
+
+- **Grafici allineati allo storico HA**: mini grafico card controllo e **HA Thermo Grafico** usano il **recorder** (`history_during_period` con attributi completi, `significant_changes_only: false`), non più la curva profilo 0–23h.
+- **Linee a gradino** (attuale blu, destinataria gialla), senza punti; asse X temporale (tick 6h, etichette data a mezzanotte); griglia Y ogni **1 °C** con margine ±1°; legenda con valore corrente e toggle serie; tooltip al passaggio.
+- **Predefiniti**: **48h** grafico card, **24h** mini; overlay profilo **spento** di default (tratteggio opzionale). Selezione sensori ambiente invariata.
+
 ## 0.3.8
 
 - **Card controllo – layout**: prima temperatura (slider solo in **Manuale**; in **Automatico** ambiente e setpoint in sola lettura), sotto **Automatico / Manuale** e pulsante **On/Off** sul climate (`turn_on` / `turn_off` o `hvac_mode`).

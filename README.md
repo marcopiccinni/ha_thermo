@@ -55,7 +55,7 @@ show_status: true
 | --- | --- | --- |
 | `title` | `Termostato` | Titolo della card. |
 | `zone` | — | Entità `climate` della zona. |
-| `show_graph` | `true` | Mostra il grafico 24h del profilo di oggi. |
+| `show_graph` | `true` | Mini grafico **storico 24h** (stile History HA). |
 | `show_slider` | `true` | Slider e ± in modalità **Manuale** (in automatico solo lettura). |
 | `show_weekly` | `true` | Abilita icona matita per pianificazione Lun–Dom. |
 | `show_status` | `true` | Mostra profilo attivo. |
@@ -70,7 +70,7 @@ Storico dal **recorder** HA: setpoint del termostato (attributi climate) e tempe
 type: custom:ha-thermo-graph-card
 title: Studio
 zone: studio
-time_range: 24h
+time_range: 48h
 room_sensors:
   - sensor.temperatura_sala
 height: 200
@@ -87,12 +87,12 @@ color_profile: "#4caf50"
 | `title` | `Grafico` | Titolo della card. |
 | `zone` / `climate_entity` | — | Zona HA Thermo o entità `climate`. |
 | `room_sensors` | `[]` | Sensori `sensor.*` (ambiente); se vuoto usa `current_temperature` del climate o il sensore configurato in zona. |
-| `time_range` | `24h` | `6h`, `12h`, `24h`, `48h`, `7d` (oppure `hours_to_show` 1–168). |
+| `time_range` | `48h` | `6h`, `12h`, `24h`, `48h`, `7d` (oppure `hours_to_show` 1–168). |
 | `height` | `200` | Altezza grafico in px. |
 | `min_temp` / `max_temp` | auto | Limiti Y (vuoto = auto con margine). |
 | `show_current` | `true` | Temperatura ambiente (linea). |
 | `show_target` | `true` | Setpoint storico (linea a gradino). |
-| `show_profile_overlay` | `true` | Curva profilo di oggi (tratteggio). |
+| `show_profile_overlay` | `false` | Curva profilo di oggi (tratteggio). |
 | `color_*` | tema | Colori ambiente, setpoint, profilo. |
 
 ## Logica di controllo

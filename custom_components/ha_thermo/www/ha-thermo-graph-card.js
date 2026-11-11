@@ -3,45 +3,35 @@ import {
   EVENT_TYPES,
   GRAPH_TIME_RANGES,
   esc,
-  formatChartTime,
-  formatTemp,
   findZone,
   getZoneOptions,
   graphHoursToShow,
-  historyByEntity,
-  historyClimateCurrentPoints,
-  historySensorPoints,
-  historySetpointPoints,
-  linePath,
   parseRoomSensorList,
   profileSchedulePoints,
-  stepLinePath,
-  yDomainPadded,
+  fetchRecorderHistory,
+  assembleHistorySeries,
+  renderHistoryChartBlock,
+  wireHistoryChartUI,
+  yDomainHistory,
   callWS,
   todayKey,
-} from "./ha-thermo-common.js?v=0.3.8";
-
-const DEFAULT_COLORS = {
-  current: "var(--primary-color)",
-  target: "#ff9800",
-  profile: "#4caf50",
-  sensors: ["#2196f3", "#9c27b0", "#009688", "#e91e63"],
-};
+  HISTORY_SERIES_COLORS,
+} from "./ha-thermo-common.js?v=0.3.9";
 
 const DEFAULT_CONFIG = () => ({
   title: "Grafico",
-  height: 200,
-  time_range: "24h",
+  height: 220,
+  time_range: "48h",
   hours_to_show: null,
   min_temp: null,
   max_temp: null,
   show_current: true,
   show_target: true,
-  show_profile_overlay: true,
+  show_profile_overlay: false,
   room_sensors: [],
-  color_current: DEFAULT_COLORS.current,
-  color_target: DEFAULT_COLORS.target,
-  color_profile: DEFAULT_COLORS.profile,
+  color_current: HISTORY_SERIES_COLORS.current,
+  color_target: HISTORY_SERIES_COLORS.target,
+  color_profile: HISTORY_SERIES_COLORS.profile,
 });
 
 class HaThermoGraphCard extends HTMLElement {
@@ -57,14 +47,16 @@ class HaThermoGraphCard extends HTMLElement {
     this._reloadTimer = null;
     this._started = false;
     this._watch = new Set();
-    this._chartSvg = "";
+    this._chartModel = null;
+    this._visibility = { current: true, target: true, profile: false };
+    this._historyStream = false;
   }
 
   static getStubConfig(hass, entities) {
     const climate = entities?.find((id) => id.startsWith("climate."));
     return climate
-      ? { zone: climate, climate_entity: climate, title: "Grafico termostato", time_range: "24h" }
-      : { title: "Grafico termostato", time_range: "24h" };
+      ? { zone: climate, climate_entity: climate, title: "Grafico termostato", time_range: "48h" }
+      : { title: "Grafico termostato", time_range: "48h" };
   }
 
   static getConfigElement() {
@@ -80,6 +72,7 @@ class HaThermoGraphCard extends HTMLElement {
       show_profile_overlay:
         config.show_profile_overlay ?? legacyProfile ?? DEFAULT_CONFIG().show_profile_overlay,
     };
+    this._visibility.profile = this._config.show_profile_overlay === true;
     this._renderChrome();
     this._scheduleChartReload();
   }
@@ -92,7 +85,7 @@ class HaThermoGraphCard extends HTMLElement {
       this._subscribe();
       this._timer = window.setInterval(() => {
         if (!document.hidden) this._scheduleChartReload();
-      }, 60000);
+      }, 120000);
     }
   }
 
@@ -103,7 +96,7 @@ class HaThermoGraphCard extends HTMLElement {
     if (!this._timer) {
       this._timer = window.setInterval(() => {
         if (!document.hidden) this._scheduleChartReload();
-      }, 60000);
+      }, 120000);
     }
   }
 
@@ -148,6 +141,30 @@ class HaThermoGraphCard extends HTMLElement {
     this._watch = new Set([climateId, ...roomIds].filter(Boolean));
   }
 
+  async _subscribeHistoryStream(climateId, roomIds) {
+    if (!this._hass?.connection?.subscribeMessage) return;
+    const hours = graphHoursToShow(this._config, 48);
+    const end = Date.now();
+    const start = end - hours * 3600000;
+    const ids = [climateId, ...roomIds.filter((id) => id !== climateId)];
+    try {
+      const unsub = await this._hass.connection.subscribeMessage(
+        () => this._scheduleChartReload(),
+        {
+          type: "history/stream",
+          entity_ids: ids,
+          start_time: new Date(start).toISOString(),
+          end_time: new Date(end).toISOString(),
+          minimal_response: false,
+          significant_changes_only: false,
+        },
+      );
+      this._unsubs.push(unsub);
+    } catch (e) {
+      /* stream optional */
+    }
+  }
+
   async _subscribe() {
     for (const et of EVENT_TYPES) {
       try {
@@ -170,7 +187,7 @@ class HaThermoGraphCard extends HTMLElement {
 
   _scheduleChartReload() {
     window.clearTimeout(this._reloadTimer);
-    this._reloadTimer = window.setTimeout(() => this._renderChart(), 350);
+    this._reloadTimer = window.setTimeout(() => this._renderChart(), 300);
   }
 
   async _loadConfig() {
@@ -183,6 +200,12 @@ class HaThermoGraphCard extends HTMLElement {
     }
     this._renderChrome();
     await this._renderChart();
+    const climateId = this._climateEntity();
+    const zone = this._zone();
+    if (climateId && !this._historyStream) {
+      this._historyStream = true;
+      await this._subscribeHistoryStream(climateId, this._roomSensorIds(zone));
+    }
   }
 
   _renderChrome() {
@@ -194,12 +217,12 @@ class HaThermoGraphCard extends HTMLElement {
         : this._climateEntity()
           ? `<div class="sub">${esc(this._climateEntity())}</div>`
           : "";
+    const height = this._config.height || 220;
     const body = !this._data
       ? `<div class="empty">${this._error ? esc(this._error) : "Caricamento…"}</div>`
       : !this._climateEntity()
         ? `<div class="empty">Collega il termostato (climate) con la matita</div>`
-        : `<div class="chart-wrap" id="chart-host">${this._chartSvg || `<div class="empty">Caricamento storico…</div>`}</div>`;
-    const height = this._config.height || 200;
+        : `<div class="chart-wrap" id="chart-host" style="min-height:${height}px"><div class="empty">Caricamento storico…</div></div>`;
     this.shadowRoot.innerHTML = `<style>
       :host{display:block}
       .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:var(--ha-card-border-radius,12px);border:var(--ha-card-border-width,1px) solid var(--ha-card-border-color,var(--divider-color,transparent));box-shadow:var(--ha-card-box-shadow,none);padding:16px}
@@ -207,32 +230,15 @@ class HaThermoGraphCard extends HTMLElement {
       .title{font-weight:600;font-size:1.05rem}
       .sub{font-size:0.75rem;color:var(--secondary-text-color);margin-top:2px}
       .chart-wrap{position:relative;width:100%}
-      .curve{width:100%;height:${height}px;background:rgba(127,127,127,0.05);border-radius:8px;display:block}
-      .legend{display:flex;flex-wrap:wrap;gap:10px 14px;font-size:0.75rem;color:var(--secondary-text-color);margin-top:8px}
-      .legend span{display:inline-flex;align-items:center;gap:4px}
-      .swatch{width:14px;height:3px;border-radius:1px;display:inline-block}
+      .curve{width:100%;display:block}
+      .hist-legend{display:flex;flex-direction:column;gap:6px;margin-top:8px;font-size:0.8rem}
+      .hist-legend-item{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+      .hist-swatch{width:18px;height:3px;border-radius:1px;flex-shrink:0}
+      .hist-label{color:var(--secondary-text-color)}
+      .hist-label strong{color:var(--primary-text-color);font-weight:600;margin-left:4px}
+      .chart-tooltip{position:absolute;z-index:2;transform:translateX(-50%);background:var(--card-background-color,#fff);border:1px solid var(--divider-color);border-radius:8px;padding:6px 8px;font-size:0.75rem;box-shadow:0 2px 8px rgba(0,0,0,.15);pointer-events:none;white-space:nowrap}
       .empty{color:var(--secondary-text-color);padding:12px 0;text-align:center}
-    </style><div class="card"><div class="head"><div class="title">${esc(this._config.title || zone?.name || "Grafico")}</div>${sub}</div>${body}${this._legendHtml()}</div>`;
-  }
-
-  async _fetchHistory(entityIds) {
-    if (!this._hass || !entityIds.length) return {};
-    const hours = graphHoursToShow(this._config);
-    const end = Date.now();
-    const start = end - hours * 3600000;
-    try {
-      const raw = await this._hass.callWS({
-        type: "history/history_during_period",
-        start_time: new Date(start).toISOString(),
-        end_time: new Date(end).toISOString(),
-        entity_ids: entityIds,
-        minimal_response: true,
-        no_attributes: false,
-      });
-      return historyByEntity(raw, entityIds);
-    } catch (e) {
-      return {};
-    }
+    </style><div class="card"><div class="head"><div class="title">${esc(this._config.title || zone?.name || "Grafico")}</div>${sub}</div>${body}</div>`;
   }
 
   _profileHourly(zone) {
@@ -244,6 +250,13 @@ class HaThermoGraphCard extends HTMLElement {
     return null;
   }
 
+  _paintChart() {
+    const host = this.shadowRoot?.querySelector("#chart-host");
+    if (!host || !this._chartModel) return;
+    host.innerHTML = renderHistoryChartBlock(this._chartModel, this._visibility);
+    wireHistoryChartUI(host, this._chartModel, this._visibility);
+  }
+
   async _renderChart() {
     if (!this._hass || !this.shadowRoot) return;
     const climateId = this._climateEntity();
@@ -253,198 +266,53 @@ class HaThermoGraphCard extends HTMLElement {
     const roomIds = this._roomSensorIds(zone);
     this._updateWatch(climateId, roomIds);
 
-    const hours = graphHoursToShow(cfg);
+    const hours = graphHoursToShow(cfg, 48);
     const end = Date.now();
     const start = end - hours * 3600000;
-
     const entityIds = [climateId, ...roomIds.filter((id) => id !== climateId)];
-    const byEntity = await this._fetchHistory(entityIds);
-    const climateHist = byEntity[climateId] || [];
+    const byEntity = await fetchRecorderHistory(this._hass, entityIds, start, end);
 
-    const setpoints = cfg.show_target !== false ? historySetpointPoints(climateHist) : [];
-    let currentPts = [];
-    if (cfg.show_current !== false) {
-      if (roomIds.length) {
-        for (const sid of roomIds) {
-          const pts = historySensorPoints(byEntity[sid] || []);
-          if (pts.length) currentPts = currentPts.concat(pts.map((p) => ({ ...p, _sensor: sid })));
-        }
-      }
-      if (!currentPts.length) {
-        currentPts = historyClimateCurrentPoints(climateHist);
-      }
-    }
-
-    const sensorSeries = [];
-    if (roomIds.length && cfg.show_current !== false) {
-      roomIds.forEach((sid, i) => {
-        const pts = historySensorPoints(byEntity[sid] || []);
-        if (pts.length) sensorSeries.push({ id: sid, points: pts, colorIdx: i });
-      });
-    }
-
-    let profilePts = [];
-    if (cfg.show_profile_overlay !== false && zone) {
-      const hourly = this._profileHourly(zone);
+    let profilePts = null;
+    if (cfg.show_profile_overlay) {
+      const hourly = zone ? this._profileHourly(zone) : null;
       if (hourly) profilePts = profileSchedulePoints(hourly, start, end);
     }
 
-    const allY = [
-      ...setpoints.map((p) => p.y),
-      ...currentPts.map((p) => p.y),
-      ...sensorSeries.flatMap((s) => s.points.map((p) => p.y)),
-      ...profilePts.map((p) => p.y),
-    ];
-    const { min: minY, max: maxY } = yDomainPadded(allY, cfg.min_temp, cfg.max_temp);
+    const series = assembleHistorySeries({
+      hass: this._hass,
+      byEntity,
+      climateId,
+      sensorIds: roomIds,
+      includeCurrent: cfg.show_current !== false,
+      includeTarget: cfg.show_target !== false,
+      profilePoints: profilePts,
+      colors: {
+        current: cfg.color_current,
+        target: cfg.color_target,
+        profile: cfg.color_profile,
+      },
+    });
 
-    this._chartSvg = this._buildSvg({
-      setpoints,
-      currentPts: roomIds.length ? [] : currentPts,
-      sensorSeries,
-      profilePts,
-      minY,
-      maxY,
+    series.forEach((s) => {
+      if (s.id.startsWith("sensor:")) this._visibility[s.id] = this._visibility[s.id] !== false;
+    });
+    if (profilePts) this._visibility.profile = cfg.show_profile_overlay !== false;
+
+    const allY = series.flatMap((s) => s.points.map((p) => p.y));
+    const { min: minY, max: maxY } = yDomainHistory(allY, cfg.min_temp, cfg.max_temp);
+    const height = cfg.height || 220;
+
+    this._chartModel = {
+      series,
       start,
       end,
-      hours,
-      cfg,
-    });
-
-    const host = this.shadowRoot.querySelector("#chart-host");
-    if (host) host.innerHTML = this._chartSvg;
-    else this._renderChrome();
-  }
-
-  _buildSvg({ setpoints, currentPts, sensorSeries, profilePts, minY, maxY, start, end, hours, cfg }) {
-    const height = cfg.height || 200;
-    const width = 480;
-    const left = 44;
-    const right = 12;
-    const top = 14;
-    const bottom = 26;
-    const plotW = width - left - right;
-    const plotH = height - top - bottom;
-    const span = end - start;
-    const xScale = (t) => left + ((t - start) / span) * plotW;
-    const yScale = (v) => top + (1 - (v - minY) / (maxY - minY)) * plotH;
-
-    const cCurrent = cfg.color_current || DEFAULT_COLORS.current;
-    const cTarget = cfg.color_target || DEFAULT_COLORS.target;
-    const cProfile = cfg.color_profile || DEFAULT_COLORS.profile;
-
-  if (!setpoints.length && !currentPts.length && !sensorSeries.length && !profilePts.length) {
-      return `<svg class="curve" viewBox="0 0 ${width} ${height}"><text x="${width / 2}" y="${height / 2}" text-anchor="middle" fill="var(--secondary-text-color)">Nessun dato storico nel recorder</text></svg>`;
-    }
-
-    const grid = [];
-    for (let i = 0; i <= 3; i += 1) {
-      const v = minY + ((maxY - minY) * i) / 3;
-      const y = yScale(v);
-      grid.push(
-        `<line x1="${left}" y1="${y.toFixed(1)}" x2="${width - right}" y2="${y.toFixed(1)}" stroke="var(--divider-color)" stroke-width="0.6" opacity="0.55"/>` +
-          `<text x="${left - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--secondary-text-color)">${(Math.round(v * 10) / 10).toFixed(1)}°</text>`,
-      );
-    }
-
-    const xLabels = [];
-    for (let i = 0; i <= 4; i += 1) {
-      const t = start + (span * i) / 4;
-      xLabels.push(
-        `<text x="${xScale(t).toFixed(1)}" y="${height - 6}" text-anchor="middle" font-size="8" fill="var(--secondary-text-color)">${esc(formatChartTime(t, hours))}</text>`,
-      );
-    }
-
-    const paths = [];
-    const titles = [];
-
-    if (profilePts.length) {
-      const d = stepLinePath(profilePts, xScale, yScale, start, end);
-      if (d) {
-        paths.push(
-          `<path d="${d}" fill="none" stroke="${esc(cProfile)}" stroke-width="1.5" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"><title>Profilo programmato (oggi)</title></path>`,
-        );
-      }
-    }
-
-    if (setpoints.length) {
-      const d = stepLinePath(setpoints, xScale, yScale, start, end);
-      if (d) {
-        paths.push(
-          `<path d="${d}" fill="none" stroke="${esc(cTarget)}" stroke-width="2.2" vector-effect="non-scaling-stroke"><title>Setpoint (storico)</title></path>`,
-        );
-      }
-    }
-
-    if (currentPts.length) {
-      const d = linePath(currentPts, xScale, yScale, start, end);
-      if (d) {
-        paths.push(
-          `<path d="${d}" fill="none" stroke="${esc(cCurrent)}" stroke-width="2" vector-effect="non-scaling-stroke"><title>Temperatura ambiente (climate)</title></path>`,
-        );
-      }
-      titles.push(...this._tooltipDots(currentPts, xScale, yScale, cCurrent, "Ambiente"));
-    }
-
-    sensorSeries.forEach((s) => {
-      const color = DEFAULT_COLORS.sensors[s.colorIdx % DEFAULT_COLORS.sensors.length];
-      const d = linePath(s.points, xScale, yScale, start, end);
-      if (d) {
-        paths.push(
-          `<path d="${d}" fill="none" stroke="${esc(color)}" stroke-width="1.8" vector-effect="non-scaling-stroke"><title>${esc(s.id)}</title></path>`,
-        );
-      }
-      titles.push(...this._tooltipDots(s.points, xScale, yScale, color, s.id));
-    });
-
-    return `<svg class="curve" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
-      ${grid.join("")}
-      ${xLabels.join("")}
-      ${paths.join("")}
-      ${titles.join("")}
-    </svg>`;
-  }
-
-  _tooltipDots(points, xScale, yScale, color, label) {
-    if (points.length > 80) return [];
-    const step = Math.ceil(points.length / 40);
-    const out = [];
-    for (let i = 0; i < points.length; i += step) {
-      const p = points[i];
-      out.push(
-        `<circle cx="${xScale(p.x).toFixed(1)}" cy="${yScale(p.y).toFixed(1)}" r="3" fill="${esc(color)}" opacity="0.85"><title>${esc(label)}: ${esc(formatTemp(p.y))} · ${esc(formatChartTime(p.x, 24))}</title></circle>`,
-      );
-    }
-    return out;
-  }
-
-  _legendHtml() {
-    const cfg = this._config;
-    const zone = this._zone();
-    const roomIds = this._roomSensorIds(zone);
-    const items = [];
-    if (cfg.show_target !== false) {
-      items.push(
-        `<span><span class="swatch" style="background:${esc(cfg.color_target || DEFAULT_COLORS.target)}"></span>Setpoint</span>`,
-      );
-    }
-    if (cfg.show_current !== false) {
-      if (roomIds.length) {
-        roomIds.forEach((id, i) => {
-          const c = DEFAULT_COLORS.sensors[i % DEFAULT_COLORS.sensors.length];
-          items.push(`<span><span class="swatch" style="background:${esc(c)}"></span>${esc(id)}</span>`);
-        });
-      } else {
-        items.push(
-          `<span><span class="swatch" style="background:${esc(cfg.color_current || DEFAULT_COLORS.current)}"></span>Ambiente</span>`,
-        );
-      }
-    }
-    if (cfg.show_profile_overlay !== false) {
-      items.push(
-        `<span><span class="swatch" style="background:${esc(cfg.color_profile || DEFAULT_COLORS.profile)};opacity:0.7;border-bottom:2px dashed ${esc(cfg.color_profile || DEFAULT_COLORS.profile)}"></span>Profilo oggi</span>`,
-      );
-    }
-    return items.length ? `<div class="legend">${items.join("")}</div>` : "";
+      spanHours: hours,
+      width: 480,
+      height,
+      minY,
+      maxY,
+    };
+    this._paintChart();
   }
 }
 
@@ -484,7 +352,7 @@ class HaThermoGraphCardEditor extends HTMLElement {
   _render() {
     const c = this._config;
     const rangeOpts = GRAPH_TIME_RANGES.map(
-      (r) => `<option value="${r.key}" ${(c.time_range || "24h") === r.key ? "selected" : ""}>${esc(r.label)}</option>`,
+      (r) => `<option value="${r.key}" ${(c.time_range || "48h") === r.key ? "selected" : ""}>${esc(r.label)}</option>`,
     ).join("");
     const zoneOpts = getZoneOptions(this._zones, false);
     const roomVal = Array.isArray(c.room_sensors) ? c.room_sensors.join(", ") : c.room_sensors || "";
@@ -497,22 +365,22 @@ class HaThermoGraphCardEditor extends HTMLElement {
     </style><div class="form">
       <label>Titolo<input type="text" data-field="title" value="${esc(c.title || "")}"></label>
       <label>Termostato (zona HA Thermo)<select data-field="zone">${zoneOpts}</select></label>
-      <span class="hint">Oppure imposta <code>climate_entity</code> nel YAML. Se i sensori ambiente sono vuoti, si usa <code>current_temperature</code> del climate.</span>
+      <span class="hint">Oppure imposta <code>climate_entity</code> nel YAML.</span>
       <label>Sensori temperatura ambiente (opzionale)
         <textarea data-field="room_sensors" rows="2" placeholder="sensor.sala, sensor.camera">${esc(roomVal)}</textarea>
       </label>
       <label>Intervallo<select data-field="time_range">${rangeOpts}</select></label>
-      <label>Altezza grafico (px)<input type="number" data-field="height" min="120" max="480" value="${esc(c.height || 200)}"></label>
+      <label>Altezza grafico (px)<input type="number" data-field="height" min="120" max="480" value="${esc(c.height || 220)}"></label>
       <div class="row">
         <label style="flex:1">Y min (vuoto=auto)<input type="number" step="0.5" data-field="min_temp" value="${esc(c.min_temp ?? "")}"></label>
         <label style="flex:1">Y max<input type="number" step="0.5" data-field="max_temp" value="${esc(c.max_temp ?? "")}"></label>
       </div>
       <label class="row"><input type="checkbox" data-field="show_target" ${c.show_target !== false ? "checked" : ""}> Mostra setpoint (storico)</label>
       <label class="row"><input type="checkbox" data-field="show_current" ${c.show_current !== false ? "checked" : ""}> Mostra temperatura ambiente</label>
-      <label class="row"><input type="checkbox" data-field="show_profile_overlay" ${c.show_profile_overlay !== false ? "checked" : ""}> Sovrapponi profilo di oggi (tratteggio)</label>
-      <label>Colore ambiente<input type="text" data-field="color_current" value="${esc(c.color_current || DEFAULT_COLORS.current)}"></label>
-      <label>Colore setpoint<input type="text" data-field="color_target" value="${esc(c.color_target || DEFAULT_COLORS.target)}"></label>
-      <label>Colore profilo<input type="text" data-field="color_profile" value="${esc(c.color_profile || DEFAULT_COLORS.profile)}"></label>
+      <label class="row"><input type="checkbox" data-field="show_profile_overlay" ${c.show_profile_overlay === true ? "checked" : ""}> Sovrapponi profilo di oggi (tratteggio)</label>
+      <label>Colore ambiente<input type="text" data-field="color_current" value="${esc(c.color_current || HISTORY_SERIES_COLORS.current)}"></label>
+      <label>Colore setpoint<input type="text" data-field="color_target" value="${esc(c.color_target || HISTORY_SERIES_COLORS.target)}"></label>
+      <label>Colore profilo<input type="text" data-field="color_profile" value="${esc(c.color_profile || HISTORY_SERIES_COLORS.profile)}"></label>
     </div>`;
     const zoneSel = this.shadowRoot.querySelector('[data-field="zone"]');
     if (zoneSel && c.zone) zoneSel.value = c.zone;
@@ -558,7 +426,7 @@ if (!window.customCards.some((card) => card.type === "ha-thermo-graph-card")) {
   window.customCards.push({
     type: "ha-thermo-graph-card",
     name: "HA Thermo Grafico",
-    description: "Storico recorder: setpoint e temperatura ambiente; profilo opzionale.",
+    description: "Storico recorder in stile Home Assistant.",
     preview: true,
     documentationURL: "https://github.com/marcopiccinni/ha_thermo",
   });

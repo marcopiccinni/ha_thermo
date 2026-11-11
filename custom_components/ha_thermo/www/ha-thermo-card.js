@@ -8,10 +8,14 @@ import {
   findZone,
   getZoneOptions,
   profileOptions,
-  renderChart,
+  fetchRecorderHistory,
+  assembleHistorySeries,
+  renderHistoryChartBlock,
+  wireHistoryChartUI,
+  yDomainHistory,
   callWS,
   todayKey,
-} from "./ha-thermo-common.js?v=0.3.8";
+} from "./ha-thermo-common.js?v=0.3.9";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -28,6 +32,9 @@ class HaThermoCard extends HTMLElement {
     this._started = false;
     this._weeklyOpen = false;
     this._prevHvacMode = null;
+    this._chartModel = null;
+    this._chartVisibility = { current: true, target: true };
+    this._chartTimer = null;
   }
 
   static getStubConfig(hass, entities) {
@@ -77,6 +84,7 @@ class HaThermoCard extends HTMLElement {
 
   disconnectedCallback() {
     window.clearInterval(this._timer);
+    window.clearTimeout(this._chartTimer);
     this._timer = null;
     this._unsubs.forEach((u) => {
       try {
@@ -97,6 +105,18 @@ class HaThermoCard extends HTMLElement {
         this._unsubs.push(unsub);
       } catch (e) {}
     }
+    try {
+      const unsub = await this._hass.connection.subscribeEvents((ev) => {
+        const zone = this._zone();
+        if (zone && ev?.data?.entity_id === zone.climate_entity) this._scheduleMiniChart();
+      }, "state_changed");
+      this._unsubs.push(unsub);
+    } catch (e) {}
+  }
+
+  _scheduleMiniChart() {
+    window.clearTimeout(this._chartTimer);
+    this._chartTimer = window.setTimeout(() => this._refreshMiniChart(), 280);
   }
 
   async _load() {
@@ -108,6 +128,42 @@ class HaThermoCard extends HTMLElement {
       this._error = e?.message || String(e);
     }
     this._render();
+    await this._refreshMiniChart();
+  }
+
+  async _refreshMiniChart() {
+    const zone = this._zone();
+    const cfg = this._config;
+    if (!this._hass || !zone || cfg.show_graph === false) return;
+    const host = this.shadowRoot?.querySelector("#mini-chart-host");
+    if (!host) return;
+    const hours = 24;
+    const end = Date.now();
+    const start = end - hours * 3600000;
+    const climateId = zone.climate_entity;
+    const byEntity = await fetchRecorderHistory(this._hass, [climateId], start, end);
+    const series = assembleHistorySeries({
+      hass: this._hass,
+      byEntity,
+      climateId,
+      sensorIds: [],
+      includeCurrent: true,
+      includeTarget: true,
+    });
+    const allY = series.flatMap((s) => s.points.map((p) => p.y));
+    const { min: minY, max: maxY } = yDomainHistory(allY);
+    this._chartModel = {
+      series,
+      start,
+      end,
+      spanHours: hours,
+      width: 320,
+      height: 168,
+      minY,
+      maxY,
+    };
+    host.innerHTML = renderHistoryChartBlock(this._chartModel, this._chartVisibility);
+    wireHistoryChartUI(host, this._chartModel, this._chartVisibility);
   }
 
   _call(msg, okText) {
@@ -134,11 +190,6 @@ class HaThermoCard extends HTMLElement {
 
   _zone() {
     return findZone(this._data, this._config.zone);
-  }
-
-  _activeProfile(zone) {
-    const id = zone?.active_profile;
-    return (this._data?.profiles || []).find((p) => p.id === id);
   }
 
   _climateIsOff(entityId) {
@@ -205,7 +256,7 @@ class HaThermoCard extends HTMLElement {
           <button type="button" class="icon-btn" data-action="settings" title="Termostato"><ha-icon icon="mdi:cog"></ha-icon></button>
         </div>
       </div>
-      ${cfg.show_graph !== false ? renderChart(zone, this._activeProfile(zone), this._data) : ""}
+      ${cfg.show_graph !== false ? `<div class="mini-chart" id="mini-chart-host"><div class="empty chart-loading">Caricamento grafico…</div></div>` : ""}
       <div class="controls">
         ${this._tempBlock(zone, cfg, disabled, manual)}
         <div class="mode-row">
@@ -246,6 +297,13 @@ class HaThermoCard extends HTMLElement {
       .weekly-day{display:grid;gap:2px;font-size:0.8rem}
       .weekly-day select{padding:4px;border-radius:6px;border:1px solid var(--divider-color)}
       .meta{font-size:0.8rem;color:var(--secondary-text-color);margin-top:8px}
+      .mini-chart{position:relative;margin:8px 0 4px}
+      .mini-chart .curve{width:100%;height:168px;display:block}
+      .hist-legend{display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:0.72rem}
+      .hist-legend-item{display:flex;align-items:center;gap:6px;cursor:pointer}
+      .hist-swatch{width:14px;height:3px;border-radius:1px}
+      .chart-tooltip{position:absolute;z-index:2;transform:translateX(-50%);background:var(--card-background-color,#fff);border:1px solid var(--divider-color);border-radius:6px;padding:4px 6px;font-size:0.7rem;box-shadow:0 2px 6px rgba(0,0,0,.12);pointer-events:none}
+      .chart-loading{font-size:0.8rem;padding:8px}
       .empty{text-align:center;color:var(--secondary-text-color);padding:16px}
       .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 14px;border-radius:8px;opacity:0;pointer-events:none;z-index:5}.toast.show{opacity:1}.toast.error{background:#c62828}
     </style><div class="card">${body}<div id="toast" class="toast"></div></div>`;

@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.3.8";
+export const INTEGRATION_VERSION = "0.3.9";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -55,89 +55,6 @@ export const profileOptions = (profiles, selected) =>
     .map((p) => `<option value="${esc(p.id)}" ${selected === p.id ? "selected" : ""}>${esc(p.name)}</option>`)
     .join("");
 
-export const renderChart = (zone, profile, data, opts = {}) => {
-  const showTarget = opts.show_target !== false;
-  const showCurrent = opts.show_current !== false;
-  const showGrid = opts.show_grid !== false;
-  const forecast = Array.isArray(zone?.forecast) && zone.forecast.length === 24 ? zone.forecast : null;
-  const curve = forecast
-    ? forecast.map(Number)
-    : Array.isArray(profile?.hourly) && profile.hourly.length === 24
-      ? profile.hourly.map(Number)
-      : null;
-  const target = zone?.target_temperature ?? zone?.default_temp ?? 20;
-  const current = zone?.current_temperature;
-
-  const W = 300,
-    H = 170,
-    left = 36,
-    right = 10,
-    top = 12,
-    bottom = 22;
-  const plotW = W - left - right,
-    plotH = H - top - bottom;
-
-  const series = [];
-  if (curve) series.push(...curve);
-  if (showTarget && target != null) series.push(Number(target));
-  if (showCurrent && current != null) series.push(Number(current));
-  if (!series.length) series.push(Number(zone?.default_temp ?? 20));
-
-  let dmin = Math.min(...series),
-    dmax = Math.max(...series);
-  const minSpan = 2;
-  if (dmax - dmin < minSpan) {
-    const mid = (dmin + dmax) / 2;
-    dmin = mid - minSpan / 2;
-    dmax = mid + minSpan / 2;
-  }
-  const pad = Math.max(0.3, (dmax - dmin) * 0.12);
-  dmin -= pad;
-  dmax += pad;
-
-  const x = (h) => left + (h / 23) * plotW;
-  const y = (t) => top + (1 - (t - dmin) / (dmax - dmin)) * plotH;
-  const fy = (t) => y(t).toFixed(1);
-
-  const gridTicks = [];
-  for (let i = 0; i < 4; i++) gridTicks.push(dmin + ((dmax - dmin) * i) / 3);
-
-  const grid = showGrid
-    ? gridTicks
-        .map(
-          (t) =>
-            `<line x1="${left}" y1="${fy(t)}" x2="${W - right}" y2="${fy(t)}" stroke="var(--divider-color)" stroke-width="0.5" opacity="0.5"/>` +
-            `<text x="${left - 6}" y="${(y(t) + 3).toFixed(1)}" text-anchor="end" font-size="8" fill="var(--secondary-text-color)">${(Math.round(t * 10) / 10).toFixed(0)}°</text>`,
-        )
-        .join("")
-    : "";
-
-  const hourLabels = [0, 6, 12, 18, 23]
-    .map((h) => `<text x="${x(h).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="8" fill="var(--secondary-text-color)">${h}:00</text>`)
-    .join("");
-
-  const targetLine =
-    showTarget && target != null
-      ? `<line x1="${left}" y1="${fy(target)}" x2="${W - right}" y2="${fy(target)}" stroke="var(--primary-color)" stroke-width="1.5" stroke-dasharray="5 3"/>`
-      : "";
-  const currentLine =
-    showCurrent && current != null
-      ? `<line x1="${left}" y1="${fy(current)}" x2="${W - right}" y2="${fy(current)}" stroke="var(--secondary-text-color)" stroke-width="1" opacity="0.65"/>`
-      : "";
-
-  let curveLine = "";
-  let dots = "";
-  if (curve) {
-    const pts = curve.map((t, h) => `${x(h).toFixed(1)},${fy(t)}`).join(" ");
-    curveLine = `<polyline fill="none" stroke="var(--accent-color)" stroke-width="2" points="${pts}" stroke-linejoin="round"/>`;
-    dots = curve.map((t, h) => `<circle cx="${x(h).toFixed(1)}" cy="${fy(t)}" r="1.6" fill="var(--accent-color)"/>`).join("");
-  } else {
-    curveLine = `<text x="${(left + (W - right)) / 2}" y="${top + plotH / 2}" text-anchor="middle" font-size="9" fill="var(--secondary-text-color)">Nessuna curva</text>`;
-  }
-
-  return `<svg class="curve" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${grid}${hourLabels}${targetLine}${currentLine}${curveLine}${dots}</svg>`;
-};
-
 export const callWS = async (hass, msg) => await hass.callWS(msg);
 
 export const slugProfileId = (name) =>
@@ -175,11 +92,18 @@ export const GRAPH_TIME_RANGES = [
   { key: "7d", hours: 168, label: "7 giorni" },
 ];
 
-export const graphHoursToShow = (config = {}) => {
+export const graphHoursToShow = (config = {}, fallbackHours = 48) => {
   const h = Number(config.hours_to_show);
   if (h > 0 && h <= 168) return h;
   const preset = GRAPH_TIME_RANGES.find((r) => r.key === config.time_range);
-  return preset?.hours ?? 24;
+  return preset?.hours ?? fallbackHours;
+};
+
+export const HISTORY_SERIES_COLORS = {
+  current: "#2196F3",
+  target: "#FFC107",
+  profile: "#4CAF50",
+  sensors: ["#03A9F4", "#9C27B0", "#009688", "#E91E63"],
 };
 
 export const parseRoomSensorList = (value) => {
@@ -256,8 +180,6 @@ export const climateSetpointFromState = (state) => {
   }
   if (low != null && !Number.isNaN(Number(low))) return Number(low);
   if (high != null && !Number.isNaN(Number(high))) return Number(high);
-  const n = parseFloat(state?.state);
-  if (!Number.isNaN(n) && String(state?.state).match(/^\d/)) return n;
   return NaN;
 };
 
@@ -360,7 +282,307 @@ export const profileSchedulePoints = (hourly, rangeStart, rangeEnd) => {
 export const formatChartTime = (ms, spanHours) => {
   const d = new Date(ms);
   if (spanHours > 48) {
-    return d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleString("it-IT", { weekday: "short", hour: "2-digit", minute: "2-digit" });
   }
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
 };
+
+export const formatTempLegend = (v) => {
+  if (v == null || Number.isNaN(Number(v))) return "--";
+  const n = Math.round(Number(v) * 10) / 10;
+  return `${n.toLocaleString("it-IT", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} °C`;
+};
+
+const _lastY = (points) => (points?.length ? points[points.length - 1].y : null);
+
+export const liveClimateValue = (hass, entityId, kind) => {
+  const st = hass?.states?.[entityId];
+  if (!st) return null;
+  if (kind === "current") return climateCurrentFromState(st);
+  if (kind === "target") return climateSetpointFromState(st);
+  return sensorTempFromState(st);
+};
+
+export async function fetchRecorderHistory(hass, entityIds, startMs, endMs) {
+  if (!hass || !entityIds?.length) return {};
+  try {
+    const raw = await hass.callWS({
+      type: "history/history_during_period",
+      start_time: new Date(startMs).toISOString(),
+      end_time: new Date(endMs).toISOString(),
+      entity_ids: entityIds,
+      minimal_response: false,
+      no_attributes: false,
+      significant_changes_only: false,
+    });
+    return historyByEntity(raw, entityIds);
+  } catch (e) {
+    return {};
+  }
+}
+
+export function yDomainHistory(values, minOverride, maxOverride) {
+  const nums = (values || []).filter((v) => v != null && !Number.isNaN(v));
+  if (!nums.length) return { min: 16, max: 22 };
+  let min = minOverride != null ? Number(minOverride) : Math.floor(Math.min(...nums)) - 1;
+  let max = maxOverride != null ? Number(maxOverride) : Math.ceil(Math.max(...nums)) + 1;
+  if (max <= min) max = min + 2;
+  return { min, max };
+}
+
+export function xAxisTickMarks(start, end, spanHours) {
+  const stepH = spanHours <= 72 ? 6 : 12;
+  const step = stepH * 3600000;
+  const marks = [];
+  const cursor = new Date(start);
+  cursor.setMinutes(0, 0, 0);
+  cursor.setSeconds(0, 0);
+  const offset = cursor.getHours() % stepH;
+  if (offset) cursor.setHours(cursor.getHours() + (stepH - offset));
+  while (cursor.getTime() <= end + step) {
+    const ms = cursor.getTime();
+    if (ms >= start - 1 && ms <= end + 1) {
+      const isMidnight = cursor.getHours() === 0;
+      marks.push({
+        ms,
+        isMidnight,
+        time: cursor.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }),
+        date: isMidnight
+          ? cursor.toLocaleDateString("it-IT", { day: "numeric", month: "short" }).replace(/\./g, "")
+          : null,
+      });
+    }
+    cursor.setHours(cursor.getHours() + stepH);
+  }
+  return marks;
+}
+
+export function assembleHistorySeries({
+  hass,
+  byEntity,
+  climateId,
+  sensorIds = [],
+  includeCurrent = true,
+  includeTarget = true,
+  profilePoints = null,
+  colors = {},
+}) {
+  const climateHist = byEntity[climateId] || [];
+  const series = [];
+  if (includeTarget) {
+    const points = historySetpointPoints(climateHist);
+    series.push({
+      id: "target",
+      label: "temperatura destinataria",
+      color: colors.target || HISTORY_SERIES_COLORS.target,
+      points,
+      step: true,
+      currentValue: liveClimateValue(hass, climateId, "target") ?? _lastY(points),
+    });
+  }
+  if (includeCurrent) {
+    const points = historyClimateCurrentPoints(climateHist);
+    series.push({
+      id: "current",
+      label: "temperatura attuale",
+      color: colors.current || HISTORY_SERIES_COLORS.current,
+      points,
+      step: true,
+      currentValue: liveClimateValue(hass, climateId, "current") ?? _lastY(points),
+    });
+  }
+  sensorIds.forEach((sid, i) => {
+    if (sid === climateId) return;
+    const points = historySensorPoints(byEntity[sid] || []);
+    const label = hass?.states?.[sid]?.attributes?.friendly_name || sid;
+    series.push({
+      id: `sensor:${sid}`,
+      label,
+      color: (colors.sensors && colors.sensors[i]) || HISTORY_SERIES_COLORS.sensors[i % HISTORY_SERIES_COLORS.sensors.length],
+      points,
+      step: true,
+      currentValue: liveClimateValue(hass, sid, "sensor") ?? _lastY(points),
+    });
+  });
+  if (profilePoints?.length) {
+    series.push({
+      id: "profile",
+      label: "profilo programmato",
+      color: colors.profile || HISTORY_SERIES_COLORS.profile,
+      points: profilePoints,
+      step: true,
+      dashed: true,
+      currentValue: null,
+    });
+  }
+  return series;
+}
+
+export function renderHistoryChartSvg({
+  series,
+  visibility = {},
+  start,
+  end,
+  spanHours,
+  width = 480,
+  height = 200,
+  minY,
+  maxY,
+}) {
+  const left = 42;
+  const right = 10;
+  const top = 16;
+  const bottom = 28;
+  const plotW = width - left - right;
+  const plotH = height - top - bottom;
+  const span = Math.max(1, end - start);
+  const xScale = (t) => left + ((t - start) / span) * plotW;
+  const yScale = (v) => top + (1 - (v - minY) / (maxY - minY)) * plotH;
+
+  const visible = series.filter((s) => visibility[s.id] !== false);
+  const hasData = visible.some((s) => s.points?.length);
+  if (!hasData) {
+    return `<svg class="curve" data-history-chart viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet"><text x="${width / 2}" y="${height / 2}" text-anchor="middle" fill="var(--secondary-text-color)">Nessun dato storico</text></svg>`;
+  }
+
+  const yGrid = [];
+  for (let v = Math.ceil(minY); v <= Math.floor(maxY); v += 1) {
+    const y = yScale(v);
+    yGrid.push(
+      `<line x1="${left}" y1="${y.toFixed(1)}" x2="${width - right}" y2="${y.toFixed(1)}" stroke="var(--divider-color)" stroke-width="0.6" opacity="0.55"/>` +
+        `<text x="${left - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--secondary-text-color)">${v}</text>`,
+    );
+  }
+  yGrid.push(
+    `<text x="${left - 6}" y="${(top - 4).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--secondary-text-color)">°C</text>`,
+  );
+
+  const xGrid = xAxisTickMarks(start, end, spanHours).map((m) => {
+    const x = xScale(m.ms);
+    const labelY = m.isMidnight ? height - 18 : height - 8;
+    const weight = m.isMidnight ? "600" : "400";
+    const fill = m.isMidnight ? "var(--primary-text-color)" : "var(--secondary-text-color)";
+    let text = m.isMidnight ? m.date : m.time;
+    return (
+      `<line x1="${x.toFixed(1)}" y1="${top}" x2="${x.toFixed(1)}" y2="${height - bottom}" stroke="var(--divider-color)" stroke-width="0.4" opacity="0.35"/>` +
+      `<text x="${x.toFixed(1)}" y="${labelY}" text-anchor="middle" font-size="8" font-weight="${weight}" fill="${fill}">${esc(text)}</text>`
+    );
+  });
+
+  const paths = visible
+    .map((s) => {
+      const d = stepLinePath(s.points, xScale, yScale, start, end);
+      if (!d) return "";
+      const dash = s.dashed ? ` stroke-dasharray="6 4" stroke-width="1.5"` : ` stroke-width="2"`;
+      return `<path data-series-path="${esc(s.id)}" d="${d}" fill="none" stroke="${esc(s.color)}"${dash} vector-effect="non-scaling-stroke"/>`;
+    })
+    .join("");
+
+  return `<svg class="curve" data-history-chart viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" data-range-start="${start}" data-range-end="${end}" data-min-y="${minY}" data-max-y="${maxY}">
+    ${yGrid.join("")}
+    ${xGrid.join("")}
+  <rect class="chart-hit" x="${left}" y="${top}" width="${plotW}" height="${plotH}" fill="transparent" pointer-events="all"/>
+  ${paths}
+    <line class="chart-crosshair" x1="${left}" y1="${top}" x2="${left}" y2="${top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1" opacity="0" pointer-events="none"/>
+</svg>`;
+}
+
+export function renderHistoryLegend(series, visibility = {}) {
+  return `<div class="hist-legend">${series
+    .map((s) => {
+      const on = visibility[s.id] !== false;
+      const val = s.currentValue != null ? formatTempLegend(s.currentValue) : "";
+      return `<label class="hist-legend-item" data-legend-series="${esc(s.id)}">
+        <input type="checkbox" data-series-toggle="${esc(s.id)}" ${on ? "checked" : ""} />
+        <span class="hist-swatch" style="background:${esc(s.color)}${s.dashed ? ";opacity:0.65;border-bottom:2px dashed currentColor" : ""}"></span>
+        <span class="hist-label">${esc(s.label)}${val ? ` <strong>${esc(val)}</strong>` : ""}</span>
+      </label>`;
+    })
+    .join("")}</div>`;
+}
+
+export function renderHistoryChartBlock(model, visibility) {
+  const svg = renderHistoryChartSvg({ ...model, visibility, series: model.series });
+  const legend = renderHistoryLegend(model.series, visibility);
+  return `${svg}${legend}<div class="chart-tooltip" hidden></div>`;
+}
+
+export function wireHistoryChartUI(host, model, visibility, onVisibilityChange) {
+  if (!host) return;
+  host.querySelectorAll("[data-series-toggle]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const id = input.getAttribute("data-series-toggle");
+      visibility[id] = input.checked;
+      const paths = host.querySelector(`svg[data-history-chart]`);
+      const path = host.querySelector(`[data-series-path="${id}"]`);
+      if (path) path.style.display = input.checked ? "" : "none";
+      if (onVisibilityChange) onVisibilityChange(id, input.checked);
+      if (paths && model) {
+        host.querySelector(".chart-tooltip")?.setAttribute("hidden", "");
+      }
+    });
+  });
+  const svg = host.querySelector("svg[data-history-chart]");
+  const tip = host.querySelector(".chart-tooltip");
+  const hit = host.querySelector(".chart-hit");
+  const cross = host.querySelector(".chart-crosshair");
+  if (!svg || !tip || !hit || !model) return;
+
+  const left = 42;
+  const right = 10;
+  const top = 16;
+  const bottom = 28;
+  const width = model.width || 480;
+  const height = model.height || 200;
+  const plotW = width - left - right;
+  const plotH = height - top - bottom;
+  const { start, end, minY, maxY, series } = model;
+  const span = end - start;
+  const clientToTime = (clientX) => {
+    const rect = svg.getBoundingClientRect();
+    const rel = (clientX - rect.left) / rect.width;
+    return start + rel * span;
+  };
+  const yAt = (v) => top + (1 - (v - minY) / (maxY - minY)) * plotH;
+
+  const valueAtTime = (points, t) => {
+    if (!points?.length) return null;
+    let idx = 0;
+    while (idx < points.length - 1 && points[idx + 1].x <= t) idx += 1;
+    return points[idx].y;
+  };
+
+  const showTip = (ev) => {
+    const rect = svg.getBoundingClientRect();
+    const relX = Math.min(Math.max(ev.clientX - rect.left, 0), rect.width);
+    const t = start + (relX / rect.width) * span;
+    const x = left + ((t - start) / span) * plotW;
+    if (cross) {
+      cross.setAttribute("x1", String(x));
+      cross.setAttribute("x2", String(x));
+      cross.setAttribute("opacity", "0.35");
+    }
+    const rows = series
+      .filter((s) => visibility[s.id] !== false)
+      .map((s) => {
+        const y = valueAtTime(s.points, t);
+        if (y == null) return null;
+        return `<div style="color:${esc(s.color)}">${esc(s.label)}: ${esc(formatTempLegend(y))}</div>`;
+      })
+      .filter(Boolean);
+    if (!rows.length) {
+      tip.setAttribute("hidden", "");
+      return;
+    }
+    tip.innerHTML = rows.join("");
+    tip.removeAttribute("hidden");
+    tip.style.left = `${relX}px`;
+    tip.style.top = "4px";
+  };
+
+  hit.addEventListener("mousemove", showTip);
+  hit.addEventListener("mouseleave", () => {
+    tip.setAttribute("hidden", "");
+    cross?.setAttribute("opacity", "0");
+  });
+}
