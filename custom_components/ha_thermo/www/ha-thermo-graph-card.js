@@ -21,7 +21,7 @@ import {
   callWS,
   todayKey,
   HISTORY_SERIES_COLORS,
-} from "./ha-thermo-common.js?v=0.3.10";
+} from "./ha-thermo-common.js?v=0.3.11";
 
 const DEFAULT_CONFIG = () => ({
   title: "Grafico",

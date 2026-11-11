@@ -18,7 +18,7 @@ import {
   HistoryStreamAccumulator,
   callWS,
   todayKey,
-} from "./ha-thermo-common.js?v=0.3.10";
+} from "./ha-thermo-common.js?v=0.3.11";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -346,11 +346,8 @@ class HaThermoCard extends HTMLElement {
         ? `<div class="empty">Configura la card (modifica dashboard)</div>`
         : `
       <div class="head">
-        <div>
-          <div class="title">${esc(cfg.title || zone.name)}</div>
-          <div class="sub">${manual ? "Manuale" : "Automatico"} · Oggi: ${esc(todayName || "--")}</div>
-        </div>
-        <button type="button" class="icon-btn" data-action="settings" title="Termostato"><ha-icon icon="mdi:cog"></ha-icon></button>
+        <div class="title">${esc(cfg.title || zone.name)}</div>
+        <div class="sub">${manual ? "Manuale" : "Automatico"} · Oggi: ${esc(todayName || "--")}</div>
       </div>
       ${cfg.show_graph !== false ? `<div class="mini-chart" id="mini-chart-host"><div class="empty chart-loading">Caricamento grafico…</div></div>` : ""}
       <div class="controls">
@@ -366,11 +363,9 @@ class HaThermoCard extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>
       :host{display:block}
       .card{background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);border-radius:12px;border:1px solid var(--divider-color);padding:16px}
-      .head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+      .head{display:grid;gap:2px}
       .title{font-weight:600}
       .sub{font-size:0.8rem;color:var(--secondary-text-color)}
-      .icon-btn{background:none;border:none;padding:6px;cursor:pointer;color:var(--secondary-text-color);border-radius:50%;display:inline-flex}
-      .icon-btn:hover{background:rgba(var(--rgb-primary-color,3,169,244),0.12)}
       .controls{display:grid;gap:10px;margin-top:10px}
       .mode-row{display:flex;gap:8px}
       .toggle{flex:1;padding:8px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer;background:var(--card-background-color,#fff);font-size:0.85rem}
@@ -402,11 +397,6 @@ class HaThermoCard extends HTMLElement {
     if (!btn) return;
     const zone = this._zone();
     const action = btn.dataset.action;
-    if (action === "settings" && zone) {
-      const eid = this._climatePlotId(zone);
-      this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: eid }, bubbles: true, composed: true }));
-      return;
-    }
     if (action === "power" && zone) {
       this._toggleClimatePower(zone);
       return;

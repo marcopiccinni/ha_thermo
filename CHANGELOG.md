@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.11
+
+- **Card controllo**: rimossa l’icona **ingranaggio** (`mdi:cog`) e l’apertura **more-info** dal climate in intestazione (la card grafico non aveva l’icona).
+
 ## 0.3.10
 
 - **Grafici recorder (fix)**: storico sul **climate fisico** della zona (`zone.climate_entity`); merge degli attributi parziali (come History HA) così i cambi solo su `current_temperature` / `temperature` generano scalini; `significant_changes_only: false`; intestazione card con valori live dal dispositivo (non profilo integrazione). Fix backend `current_temperature` su attributo climate.
