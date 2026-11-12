@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.3
+
+- **Assi adattivi (fix)**: scelta del **passo temporale più fine** che entra in larghezza (15m–24h); più tick X su card larghe; asse Y con passi 0,5/1/2/5 °C in base all’altezza plot; test `scripts/verify_chart_ticks.mjs`.
+
 ## 0.4.2
 
 - **Fix altezza infinita**: grafici con altezza fissa/configurabile (`chart_height` 180 / 260 px); `ResizeObserver` solo sulla larghezza; niente loop SVG→contenitore; flex `min-height:0` in vista sezioni.

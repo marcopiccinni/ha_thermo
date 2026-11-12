@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.4.2";
+export const INTEGRATION_VERSION = "0.4.3";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -523,65 +523,112 @@ export function historyChartMargins(width, height) {
   return { left, right, top, bottom, plotW, plotH };
 }
 
-const TIME_TICK_STEPS_H = [1, 2, 3, 6, 12];
+/** Time step ladder (fine → coarse), ms. */
+export const TIME_TICK_STEPS_MS = [
+  15 * 60 * 1000,
+  30 * 60 * 1000,
+  3600000,
+  2 * 3600000,
+  3 * 3600000,
+  4 * 3600000,
+  6 * 3600000,
+  12 * 3600000,
+  24 * 3600000,
+];
 
-/** Pick hour step so labels are ~labelPx apart (1h–12h). */
-export function pickTimeTickStepHours(spanMs, plotWidthPx, labelPx = 80) {
-  if (!plotWidthPx || plotWidthPx < 40) return 6;
-  let chosen = TIME_TICK_STEPS_H[TIME_TICK_STEPS_H.length - 1];
-  for (const stepH of TIME_TICK_STEPS_H) {
-    const tickCount = spanMs / (stepH * 3600000) + 1;
-    if (tickCount * labelPx <= plotWidthPx + labelPx * 0.5) chosen = stepH;
+const Y_TICK_STEPS = [0.5, 1, 2, 5];
+
+/** Finest step that still fits ~labelPx between ticks (smallest step first). */
+export function pickTimeTickStepMs(spanMs, plotWidthPx, labelPx = 80) {
+  if (!plotWidthPx || plotWidthPx < 40) return 6 * 3600000;
+  for (const stepMs of TIME_TICK_STEPS_MS) {
+    const tickCount = Math.ceil(spanMs / stepMs) + 1;
+    if (tickCount * labelPx <= plotWidthPx + labelPx * 0.5) return stepMs;
   }
-  return chosen;
+  return TIME_TICK_STEPS_MS[TIME_TICK_STEPS_MS.length - 1];
 }
 
-export function xAxisTickMarks(start, end, plotWidthPx) {
+/** @deprecated use pickTimeTickStepMs */
+export function pickTimeTickStepHours(spanMs, plotWidthPx, labelPx = 80) {
+  return pickTimeTickStepMs(spanMs, plotWidthPx, labelPx) / 3600000;
+}
+
+export function alignTimeToStep(ms, stepMs) {
+  const d = new Date(ms);
+  d.setSeconds(0, 0);
+  d.setMilliseconds(0);
+  if (stepMs < 3600000) {
+    const stepMin = stepMs / 60000;
+    const m = d.getMinutes();
+    const off = m % stepMin;
+    if (off) d.setMinutes(m + (stepMin - off));
+    return d.getTime();
+  }
+  if (stepMs < 24 * 3600000) {
+    const stepH = stepMs / 3600000;
+    let h = d.getHours();
+    const off = h % stepH;
+    if (off) h += stepH - off;
+    d.setHours(h, 0, 0, 0);
+    return d.getTime();
+  }
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+export function xAxisTickMarks(start, end, plotWidthPx, labelPx = 80) {
   const span = Math.max(1, end - start);
-  const stepH = pickTimeTickStepHours(span, plotWidthPx);
+  const stepMs = pickTimeTickStepMs(span, plotWidthPx, labelPx);
   const marks = [];
-  const cursor = new Date(start);
-  cursor.setMinutes(0, 0, 0);
-  cursor.setSeconds(0, 0);
-  const offset = cursor.getHours() % stepH;
-  if (offset) cursor.setHours(cursor.getHours() + (stepH - offset));
-  const step = stepH * 3600000;
-  while (cursor.getTime() <= end + step) {
-    const ms = cursor.getTime();
-    if (ms >= start - 1 && ms <= end + step) {
-      const isMidnight = cursor.getHours() === 0 && cursor.getMinutes() === 0;
+  let cursor = alignTimeToStep(start, stepMs);
+  if (cursor < start - stepMs) cursor += stepMs;
+  let prevDay = null;
+  while (cursor <= end + stepMs) {
+    const ms = cursor;
+    if (ms >= start - 1 && ms <= end + stepMs) {
+      const d = new Date(ms);
+      const dayKey = d.toDateString();
+      const isMidnight = d.getHours() === 0 && d.getMinutes() === 0;
+      const dayBoundary = prevDay != null && dayKey !== prevDay;
+      const showDate = isMidnight || dayBoundary;
       marks.push({
         ms,
-        isMidnight,
-        time: cursor.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }),
-        date: isMidnight
-          ? cursor.toLocaleDateString("it-IT", { day: "numeric", month: "short" }).replace(/\./g, "")
+        isMidnight: showDate,
+        time: d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }),
+        date: showDate
+          ? d.toLocaleDateString("it-IT", { day: "numeric", month: "short" }).replace(/\./g, "")
           : null,
       });
+      prevDay = dayKey;
     }
-    cursor.setTime(cursor.getTime() + step);
+    cursor += stepMs;
   }
   return marks;
 }
 
-export function yAxisTickValues(minY, maxY, plotHeightPx) {
+export function pickYAxisStep(minY, maxY, plotHeightPx, pxPerTick = 30) {
+  const range = maxY - minY;
+  if (range <= 0) return 1;
+  const maxTicks = Math.max(2, Math.floor(plotHeightPx / pxPerTick));
+  let chosen = Y_TICK_STEPS[Y_TICK_STEPS.length - 1];
+  for (const step of Y_TICK_STEPS) {
+    const n = Math.ceil(range / step) + 1;
+    if (n <= maxTicks) {
+      chosen = step;
+      break;
+    }
+  }
+  return chosen;
+}
+
+export function yAxisTickValues(minY, maxY, plotHeightPx, pxPerTick = 30) {
   const range = maxY - minY;
   if (range <= 0) return [minY, maxY];
-  const pxPerTick = plotHeightPx >= 140 && range <= 6 ? 22 : 28;
-  let step = 1;
-  if (plotHeightPx >= 160 && range <= 8) {
-    const halfTicks = range / 0.5;
-    if (halfTicks * 22 <= plotHeightPx + 10) step = 0.5;
-  }
+  const step = pickYAxisStep(minY, maxY, plotHeightPx, pxPerTick);
   const ticks = [];
   const start = Math.ceil(minY / step) * step;
   for (let v = start; v <= maxY + step * 0.01; v += step) {
     ticks.push(Math.round(v * 10) / 10);
-  }
-  if (pxPerTick > 0 && ticks.length * pxPerTick > plotHeightPx + 24 && step < 1) {
-    step = 1;
-    ticks.length = 0;
-    for (let v = Math.ceil(minY); v <= Math.floor(maxY); v += 1) ticks.push(v);
   }
   return ticks;
 }
@@ -640,7 +687,7 @@ export function renderHistoryChartSvg({
     const fill = m.isMidnight ? "var(--primary-text-color)" : "var(--secondary-text-color)";
     const text = m.isMidnight ? m.date : m.time;
     return (
-      `<line x1="${x.toFixed(2)}" y1="${top}" x2="${x.toFixed(2)}" y2="${top + plotH}" stroke="var(--divider-color)" stroke-width="1" opacity="0.35"/>` +
+      `<line x1="${x.toFixed(2)}" y1="${top}" x2="${x.toFixed(2)}" y2="${top + plotH}" stroke="var(--divider-color)" stroke-width="1" opacity="0.4"/>` +
       `<text x="${x.toFixed(2)}" y="${labelY}" text-anchor="middle" font-weight="${weight}" fill="${fill}" ${font}>${esc(text)}</text>`
     );
   });
