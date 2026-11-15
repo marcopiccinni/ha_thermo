@@ -10,8 +10,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
-    ATTR_ACTIVATOR,
-    ATTR_ACTIVATOR_ID,
     ATTR_DURATION,
     ATTR_ENABLED,
     ATTR_OFFSET,

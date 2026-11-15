@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from ha_thermo.const import DAYS, DEFAULT_PROFILE_IDS
 from ha_thermo.models import Profile
-from ha_thermo.profile_migration import migrate_legacy_profile_dict, migrate_profiles_list
+from ha_thermo.profile_migration import (
+    migrate_legacy_profile_dict,
+    migrate_profiles_list,
+)
 
 
 def test_default_profiles_are_protected_set() -> None:

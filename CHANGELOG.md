@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.4
+
+- **CI**: fix hassfest (chiave traduzione `new_profile` al posto di `__new__`); ruff pulito (import, websocket Profile, lint varie). Workflow Validate verde.
+
 ## 0.4.3
 
 - **Assi adattivi (fix)**: scelta del **passo temporale più fine** che entra in larghezza (15m–24h); più tick X su card larghe; asse Y con passi 0,5/1/2/5 °C in base all’altezza plot; test `scripts/verify_chart_ticks.mjs`.

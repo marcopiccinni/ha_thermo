@@ -10,12 +10,12 @@ from .models import Profile
 if TYPE_CHECKING:
     from .manager import ThermoManager
 
-PROFILE_NEW = "__new__"
+PROFILE_NEW = "new_profile"
 
 HOUR_SECTION_KEYS = ("night", "morning", "afternoon", "evening")
 
 HOUR_SECTIONS: tuple[tuple[str, range], ...] = (
-    ("night", range(0, 6)),
+    ("night", range(6)),
     ("morning", range(6, 12)),
     ("afternoon", range(12, 18)),
     ("evening", range(18, 24)),

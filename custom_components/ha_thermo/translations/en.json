@@ -104,7 +104,7 @@
   "selector": {
     "profile_picker": {
       "options": {
-        "__new__": "+ New profile"
+        "new_profile": "+ New profile"
       }
     }
   },

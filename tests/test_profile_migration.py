@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from ha_thermo.const import DAYS
 from ha_thermo.profile_migration import migrate_legacy_profile_dict
 
 

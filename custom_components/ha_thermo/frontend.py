@@ -86,7 +86,7 @@ async def _async_register_lovelace_modules(hass: HomeAssistant) -> None:
     if not getattr(resources, "loaded", False):
         try:
             await resources.async_load()
-        except Exception as err:
+        except (OSError, RuntimeError, ValueError, TypeError) as err:
             _LOGGER.debug("Could not load Lovelace resources: %s", err)
             async_call_later(hass, 5, lambda _: hass.async_create_task(_async_register_lovelace_modules(hass)))
             return
@@ -112,14 +112,14 @@ async def _async_register_lovelace_modules(hass: HomeAssistant) -> None:
                     {"res_type": "module", "url": url},
                 )
                 _LOGGER.info("Updated Lovelace resource %s (%s)", path, VERSION)
-            except Exception as err:
+            except (OSError, RuntimeError, ValueError, TypeError) as err:
                 _LOGGER.warning("Could not update Lovelace resource %s: %s", path, err)
             continue
 
         try:
             await resources.async_create_item({"res_type": "module", "url": url})
             _LOGGER.info("Registered Lovelace resource %s (%s)", path, VERSION)
-        except Exception as err:
+        except (OSError, RuntimeError, ValueError, TypeError) as err:
             _LOGGER.warning("Could not register Lovelace resource %s: %s", path, err)
 
 
@@ -144,5 +144,5 @@ async def _register_yaml_modules(hass: HomeAssistant) -> None:
         try:
             add_extra(hass, url)
             _LOGGER.info("Registered extra module URL %s", url)
-        except Exception as err:
+        except (OSError, RuntimeError, ValueError, TypeError) as err:
             _LOGGER.warning("Could not register extra module URL %s: %s", url, err)

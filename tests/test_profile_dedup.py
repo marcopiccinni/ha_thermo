@@ -1,7 +1,7 @@
 """Tests for profile deduplication."""
 
-from custom_components.ha_thermo.models import Profile
-from custom_components.ha_thermo.profile_dedup import apply_profile_merge, build_profile_merge_map
+from ha_thermo.models import Profile
+from ha_thermo.profile_dedup import apply_profile_merge, build_profile_merge_map
 
 
 def _p(pid: str, name: str, temp: float) -> Profile:

@@ -10,8 +10,9 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
-from .const import ATTR_PROFILE, ATTR_PROFILE_ID, ATTR_SOURCE_ID, ATTR_ZONE_ID, DOMAIN
+from .const import ATTR_PROFILE_ID, ATTR_SOURCE_ID, ATTR_ZONE_ID, DOMAIN
 from .manager import ThermoManager
+from .models import Profile
 
 _ZONES = vol.Optional("zones")
 _DURATION = vol.Optional("duration")
@@ -42,7 +43,7 @@ async def _execute(
     except ValueError as err:
         connection.send_error(msg["id"], "invalid_input", str(err))
         return
-    except Exception as err:
+    except (RuntimeError, OSError) as err:
         connection.send_error(msg["id"], "failed", str(err))
         return
     connection.send_result(msg["id"], result)
@@ -375,7 +376,6 @@ async def ws_export_profiles(
     connection: websocket_api.ActiveConnection,
     msg: dict,
 ) -> None:
-    import json
     manager = _manager(hass, connection, msg)
     if manager is None:
         return
@@ -407,8 +407,6 @@ async def ws_import_profiles(
             manager.profiles.clear()
         for item in msg["profiles"]:
             try:
-                profile = Profile.from_dict(item)
-                from .models import Profile
                 profile = Profile.from_dict(item)
                 manager.profiles[profile.id] = profile
             except (TypeError, ValueError) as err:

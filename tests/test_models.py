@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from ha_thermo.const import DAYS
 from ha_thermo.models import Activator, Bypass, Profile, Zone, slugify
 
 

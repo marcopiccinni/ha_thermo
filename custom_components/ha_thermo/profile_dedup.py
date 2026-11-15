@@ -83,7 +83,7 @@ def build_profile_merge_map(profiles: dict[str, Profile]) -> dict[str, str]:
         groups.setdefault(_hourly_key(profile.hourly), []).append(pid)
 
     survivors: dict[str, str] = {}
-    for _key, pids in groups.items():
+    for pids in groups.values():
         ordered = sorted(pids, key=lambda pid: _survivor_rank(pid, profiles[pid]))
         keep = ordered[0]
         survivors[keep] = keep

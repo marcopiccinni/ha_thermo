@@ -10,11 +10,15 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .bypass import active_bypass, parse_duration_minutes, remaining_seconds, resolve_end
+from .bypass import (
+    active_bypass,
+    parse_duration_minutes,
+    remaining_seconds,
+    resolve_end,
+)
 from .const import (
     ATTR_BYPASS,
     ATTR_PROFILE_ID,
@@ -23,11 +27,10 @@ from .const import (
     ATTR_TARGET,
     ATTR_ZONE_ID,
     ATTR_ZONES,
-    CONF_MANUAL_HOLD,
-    CONF_REASSERT_INTERVAL,
-    CONF_SCAN_INTERVAL,
     CONF_ZONES,
+    DAYS,
     DEFAULT_MANUAL_HOLD,
+    DEFAULT_PROFILE_IDS,
     DEFAULT_REASSERT_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -35,11 +38,9 @@ from .const import (
     EVENT_BYPASS_STARTED,
     EVENT_MANUAL_OVERRIDE,
     EVENT_PROFILE_CHANGED,
-    EVENT_TARGET_CHANGED,
     EVENT_PROFILES_CHANGED,
+    EVENT_TARGET_CHANGED,
     EVENT_ZONE_SCHEDULE_CHANGED,
-    DAYS,
-    DEFAULT_PROFILE_IDS,
     PROFILE_AUTO,
     STORAGE_KEY,
     STORAGE_VERSION,
@@ -501,7 +502,6 @@ class ThermoManager:
 
     def _notify(self) -> None:
         """Notify listeners (storage saved; cards refresh via WS/events)."""
-        pass
 
     def _fire_profiles_changed(self) -> None:
         self._fire(EVENT_PROFILES_CHANGED, {})
@@ -1032,7 +1032,6 @@ class ThermoManager:
         self, zone: Zone, now: datetime
     ) -> dict[str, Any]:
         """Get zone snapshot."""
-        pin = self.pinned_profiles.get(zone.id) or {}
         return {
             "id": zone.id,
             "name": zone.name,

@@ -106,7 +106,7 @@
   "selector": {
     "profile_picker": {
       "options": {
-        "__new__": "+ Nuovo profilo"
+        "new_profile": "+ Nuovo profilo"
       }
     }
   },
