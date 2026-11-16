@@ -11,11 +11,11 @@
     "step": {
       "init": {
         "title": "Opzioni HA Thermo",
-        "description": "Profili, zone e parametri. Puoi modificare le curve anche dall’editor card Lovelace.",
+        "description": "Profili, termostati e parametri. Puoi modificare le curve anche dall’editor card Lovelace.",
         "menu_options": {
           "profiles": "Profili",
           "settings": "Impostazioni generali",
-          "zones": "Zone termostato",
+          "zones": "Termostati",
           "finish": "Salva e chiudi"
         }
       },
@@ -131,10 +131,10 @@
   "services": {
     "set_profile": {
       "name": "Imposta profilo",
-      "description": "Attiva un profilo su tutte le zone o su una selezione.",
+      "description": "Attiva un profilo su tutti i termostati o su una selezione.",
       "fields": {
         "profile": {"name": "Profilo", "description": "Id o nome del profilo, oppure __auto__."},
-        "zones": {"name": "Zone", "description": "Id zona o entità climate."},
+        "zones": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."},
         "duration": {"name": "Durata", "description": "Durata opzionale in minuti o HH:MM."}
       }
     },
@@ -142,7 +142,7 @@
       "name": "Avvia bypass",
       "description": "Forza temporaneamente il target.",
       "fields": {
-        "zones": {"name": "Zone", "description": "Id zona o entità climate."},
+        "zones": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."},
         "temperature": {"name": "Temperatura", "description": "Temperatura assoluta."},
         "offset": {"name": "Offset", "description": "Offset rispetto al target."},
         "duration": {"name": "Durata", "description": "Durata in minuti o HH:MM."},
@@ -154,14 +154,14 @@
       "name": "Ferma bypass",
       "description": "Ferma il bypass in corso.",
       "fields": {
-        "zones": {"name": "Zone", "description": "Id zona o entità climate."}
+        "zones": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."}
       }
     },
     "set_temperature": {
       "name": "Imposta temperatura",
       "description": "Imposta una temperatura temporanea.",
       "fields": {
-        "zones": {"name": "Zone", "description": "Id zona o entità climate."},
+        "zones": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."},
         "temperature": {"name": "Temperatura", "description": "Temperatura da impostare."},
         "duration": {"name": "Durata", "description": "Durata in minuti o HH:MM."}
       }
@@ -171,7 +171,7 @@
       "description": "Abilita o disabilita il controllo automatico.",
       "fields": {
         "enabled": {"name": "Abilitato", "description": "True per abilitare."},
-        "zones": {"name": "Zone", "description": "Id zona o entità climate."}
+        "zones": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."}
       }
     },
     "create_profile": {

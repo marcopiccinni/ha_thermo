@@ -10,7 +10,13 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
-from .const import ATTR_PROFILE_ID, ATTR_SOURCE_ID, ATTR_ZONE_ID, DOMAIN
+from .const import (
+    ATTR_PROFILE_ID,
+    ATTR_SOURCE_ID,
+    ATTR_ZONE_ID,
+    CONF_CLIMATE_ENTITY,
+    DOMAIN,
+)
 from .manager import ThermoManager
 from .models import Profile
 
@@ -174,11 +180,22 @@ async def ws_set_temperature(
     )
 
 
+async def _weekly_zone_id(manager: ThermoManager, msg: dict) -> str:
+    zone_id = msg.get(ATTR_ZONE_ID)
+    climate_entity = msg.get(CONF_CLIMATE_ENTITY)
+    if zone_id:
+        return await manager.async_resolve_zone_id(str(zone_id))
+    if climate_entity:
+        return (await manager.async_ensure_zone_for_climate(str(climate_entity))).id
+    raise ValueError("zone_required")
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/zone/weekly/set",
-        vol.Required(ATTR_ZONE_ID): cv.string,
         vol.Required("schedule"): dict,
+        vol.Optional(ATTR_ZONE_ID): cv.string,
+        vol.Optional(CONF_CLIMATE_ENTITY): cv.entity_id,
     }
 )
 @websocket_api.async_response
@@ -190,11 +207,38 @@ async def ws_set_zone_weekly(
     manager = _manager(hass, connection, msg)
     if manager is None:
         return
-    await _execute(
-        connection,
-        msg,
-        lambda: manager.async_set_zone_weekly(msg[ATTR_ZONE_ID], msg["schedule"]),
-    )
+    if not msg.get(ATTR_ZONE_ID) and not msg.get(CONF_CLIMATE_ENTITY):
+        connection.send_error(msg["id"], "invalid_input", "zone_required")
+        return
+
+    async def _set_weekly() -> dict[str, str]:
+        zone_key = await _weekly_zone_id(manager, msg)
+        return await manager.async_set_zone_weekly(zone_key, msg["schedule"])
+
+    await _execute(connection, msg, _set_weekly)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/thermostat/ensure",
+        vol.Required(CONF_CLIMATE_ENTITY): cv.entity_id,
+    }
+)
+@websocket_api.async_response
+async def ws_thermostat_ensure(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    manager = _manager(hass, connection, msg)
+    if manager is None:
+        return
+
+    async def _ensure() -> dict[str, Any]:
+        zone = await manager.async_ensure_zone_for_climate(msg[CONF_CLIMATE_ENTITY])
+        return {"zone_id": zone.id, "climate_entity": zone.climate_entity, "name": zone.name}
+
+    await _execute(connection, msg, _ensure)
 
 
 @websocket_api.websocket_command(
@@ -424,6 +468,7 @@ COMMANDS = (
     ws_stop_bypass,
     ws_set_temperature,
     ws_set_zone_weekly,
+    ws_thermostat_ensure,
     ws_set_enabled,
     ws_create_profile,
     ws_update_profile,

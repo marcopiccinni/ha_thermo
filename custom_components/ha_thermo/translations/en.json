@@ -11,11 +11,11 @@
     "step": {
       "init": {
         "title": "HA Thermo Options",
-        "description": "Profiles, zones and settings. You can also edit curves in the Lovelace card editor.",
+        "description": "Profiles, thermostats and settings. You can also edit curves in the Lovelace card editor.",
         "menu_options": {
           "profiles": "Profiles",
           "settings": "General settings",
-          "zones": "Thermostat zones",
+          "zones": "Thermostats",
           "finish": "Save and close"
         }
       },
@@ -88,7 +88,7 @@
       },
       "profile_delete_confirm": {
         "title": "Delete {profile}?",
-        "description": "Scheduled days will use {fallback}. Affected zones/days: {impact}.",
+        "description": "Scheduled days will use {fallback}. Affected thermostats/days: {impact}.",
         "data": {"confirm": "I confirm deletion"}
       }
     },
@@ -129,10 +129,10 @@
   "services": {
     "set_profile": {
       "name": "Set profile",
-      "description": "Activate a profile on all zones or on a selection.",
+      "description": "Activate a profile on all thermostats or on a selection.",
       "fields": {
         "profile": {"name": "Profile", "description": "Profile id or name, or __auto__."},
-        "zones": {"name": "Zones", "description": "Zone ids or climate entity ids."},
+        "zones": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."},
         "duration": {"name": "Duration", "description": "Optional hold in minutes or HH:MM."}
       }
     },
@@ -140,7 +140,7 @@
       "name": "Start bypass",
       "description": "Temporarily override the target.",
       "fields": {
-        "zones": {"name": "Zones", "description": "Zone ids or climate entity ids."},
+        "zones": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."},
         "temperature": {"name": "Temperature", "description": "Absolute temperature."},
         "offset": {"name": "Offset", "description": "Offset from target."},
         "duration": {"name": "Duration", "description": "Duration in minutes or HH:MM."},
@@ -152,14 +152,14 @@
       "name": "Stop bypass",
       "description": "Stop the active bypass.",
       "fields": {
-        "zones": {"name": "Zones", "description": "Zone ids or climate entity ids."}
+        "zones": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."}
       }
     },
     "set_temperature": {
       "name": "Set temperature",
       "description": "Set a temporary temperature.",
       "fields": {
-        "zones": {"name": "Zones", "description": "Zone ids or climate entity ids."},
+        "zones": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."},
         "temperature": {"name": "Temperature", "description": "Temperature to set."},
         "duration": {"name": "Duration", "description": "Duration in minutes or HH:MM."}
       }
@@ -169,7 +169,7 @@
       "description": "Enable or disable automatic control.",
       "fields": {
         "enabled": {"name": "Enabled", "description": "True to enable."},
-        "zones": {"name": "Zones", "description": "Zone ids or climate entity ids."}
+        "zones": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."}
       }
     },
     "create_profile": {

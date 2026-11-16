@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.5
+
+- **Termostato fisico (non più «zona»)**: nell’editor Lovelace delle card il menu **Termostato** elenca tutte le entità `climate` di Home Assistant (non più le zone interne vuote). La card salva `climate_entity` e collega automaticamente il termostato all’integrazione al primo uso (`thermostat/ensure`).
+- **Migrazione**: le card con `zone` (id interno o già `climate.*`) vengono convertite al termostato fisico associato; profili settimanali, auto/manuale, on/off e setpoint restano legati al termostato scelto.
+- **Backend**: WebSocket `zone/weekly/set` accetta `climate_entity`; `set_profile` / `set_temperature` risolvono e registrano termostati `climate.*` on demand.
+
 ## 0.4.4
 
 - **CI**: fix hassfest (chiave traduzione `new_profile` al posto di `__new__`); ruff pulito (import, websocket Profile, lint varie). Workflow Validate verde.

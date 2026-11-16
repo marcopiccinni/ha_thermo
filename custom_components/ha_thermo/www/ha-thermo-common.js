@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.4.4";
+export const INTEGRATION_VERSION = "0.4.5";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -44,9 +44,77 @@ export const findZone = (data, zoneFilter) => {
   return null;
 };
 
-export const getZoneOptions = (zones, includeAll = false, allLabel = "Tutte le zone") => {
+/** Config key for card thermostat selection (climate entity id or legacy zone id). */
+export const cardClimateFilter = (config = {}) => {
+  const climate = String(config.climate_entity || "").trim();
+  if (climate.startsWith("climate.")) return climate;
+  const legacy = String(config.zone || "").trim();
+  if (legacy.startsWith("climate.")) return legacy;
+  return legacy;
+};
+
+/** Migrate Lovelace card config from legacy zone id to climate_entity. */
+export const migrateCardConfig = (config = {}, data = null) => {
+  const next = { ...config };
+  const key = cardClimateFilter(next);
+  if (!key) return next;
+  if (key.startsWith("climate.")) {
+    next.climate_entity = key;
+    if (next.zone && next.zone !== key) delete next.zone;
+    return next;
+  }
+  if (data) {
+    const zone = findZone(data, key);
+    if (zone?.climate_entity) {
+      next.climate_entity = zone.climate_entity;
+      delete next.zone;
+    }
+  }
+  return next;
+};
+
+export const listPhysicalClimateEntities = (hass) => {
+  if (!hass?.states) return [];
+  return Object.keys(hass.states)
+    .filter((id) => id.startsWith("climate."))
+    .sort((a, b) => {
+      const na = hass.states[a]?.attributes?.friendly_name || a;
+      const nb = hass.states[b]?.attributes?.friendly_name || b;
+      return String(na).localeCompare(String(nb), undefined, { sensitivity: "base" });
+    });
+};
+
+export const getClimateEntityOptions = (hass, selected) => {
+  const ids = listPhysicalClimateEntities(hass);
+  const sel = String(selected || "").trim();
+  let html = `<option value="" ${!sel ? "selected" : ""}>—</option>`;
+  for (const id of ids) {
+    const name = hass.states[id]?.attributes?.friendly_name || id;
+    html += `<option value="${esc(id)}" ${sel === id ? "selected" : ""}>${esc(name)}</option>`;
+  }
+  if (sel && !ids.includes(sel)) {
+    const name = hass.states[sel]?.attributes?.friendly_name || sel;
+    html += `<option value="${esc(sel)}" selected>${esc(name)}</option>`;
+  }
+  return html;
+};
+
+export const ensureThermostatLinked = async (hass, config, data) => {
+  const climate = String(config?.climate_entity || cardClimateFilter(config) || "").trim();
+  if (!climate.startsWith("climate.") || !hass) return data;
+  if (findZone(data, climate)) return data;
+  try {
+    await callWS(hass, { type: `${DOMAIN}/thermostat/ensure`, climate_entity: climate });
+    return await callWS(hass, { type: `${DOMAIN}/get_config` });
+  } catch (e) {
+    return data;
+  }
+};
+
+export const getZoneOptions = (zones, includeAll = false, allLabel = "Tutti i termostati") => {
   const opts = includeAll ? [`<option value="all">${esc(allLabel)}</option>`] : [];
-  for (const z of zones) opts.push(`<option value="${esc(z.id)}">${esc(z.name)} (${esc(z.climate_entity)})</option>`);
+  for (const z of zones)
+    opts.push(`<option value="${esc(z.climate_entity || z.id)}">${esc(z.name || z.climate_entity)}</option>`);
   return opts.join("");
 };
 
@@ -127,7 +195,9 @@ const _tsFromState = (state) => {
 };
 
 export const resolvePhysicalClimateEntity = (hass, zone, config = {}) => {
-  const candidates = [config.climate_entity, zone?.climate_entity, config.zone].map((v) => String(v || "").trim()).filter(Boolean);
+  const candidates = [config.climate_entity, zone?.climate_entity, cardClimateFilter(config)]
+    .map((v) => String(v || "").trim())
+    .filter(Boolean);
   for (const id of candidates) {
     if (!id.startsWith("climate.")) continue;
     return id;

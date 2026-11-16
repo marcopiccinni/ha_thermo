@@ -6,7 +6,10 @@ import {
   esc,
   formatTemp,
   findZone,
-  getZoneOptions,
+  cardClimateFilter,
+  migrateCardConfig,
+  getClimateEntityOptions,
+  ensureThermostatLinked,
   profileOptions,
   fetchRecorderHistory,
   buildClimateHistorySeries,
@@ -22,8 +25,8 @@ import {
   clampChartHeight,
   measureHistoryChartHost,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.4.4";
-import "./ha-thermo-profile-editor.js?v=0.4.4";
+} from "./ha-thermo-common.js?v=0.4.5";
+import "./ha-thermo-profile-editor.js?v=0.4.5";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -49,7 +52,7 @@ class HaThermoCard extends HTMLElement {
 
   static getStubConfig(hass, entities) {
     const climate = entities?.find((id) => id.startsWith("climate."));
-    return climate ? { zone: climate, title: "Termostato" } : { title: "Termostato" };
+    return climate ? { climate_entity: climate, title: "Termostato" } : { title: "Termostato" };
   }
 
   static getConfigElement() {
@@ -95,16 +98,19 @@ class HaThermoCard extends HTMLElement {
 
   setConfig(config) {
     if (!config) throw new Error("Configurazione non valida");
-    this._config = {
-      title: "Termostato",
-      show_graph: true,
-      show_graph_current: true,
-      show_graph_target: true,
-      show_slider: true,
-      show_status: true,
-      chart_height: 180,
-      ...config,
-    };
+    this._config = migrateCardConfig(
+      {
+        title: "Termostato",
+        show_graph: true,
+        show_graph_current: true,
+        show_graph_target: true,
+        show_slider: true,
+        show_status: true,
+        chart_height: 180,
+        ...config,
+      },
+      this._data,
+    );
     this._render();
     if (this._hass) this._refreshMiniChart();
   }
@@ -182,6 +188,8 @@ class HaThermoCard extends HTMLElement {
     if (!this._hass) return;
     try {
       this._data = await callWS(this._hass, { type: `${DOMAIN}/get_config` });
+      this._config = migrateCardConfig(this._config, this._data);
+      this._data = await ensureThermostatLinked(this._hass, this._config, this._data);
       this._error = null;
     } catch (e) {
       this._error = e?.message || String(e);
@@ -348,7 +356,13 @@ class HaThermoCard extends HTMLElement {
   }
 
   _zone() {
-    return findZone(this._data, this._config.zone);
+    return findZone(this._data, cardClimateFilter(this._config));
+  }
+
+  _thermostatTarget() {
+    const zone = this._zone();
+    const climate = resolvePhysicalClimateEntity(this._hass, zone, this._config);
+    return climate || cardClimateFilter(this._config);
   }
 
   _climateIsOff(entityId) {
@@ -466,7 +480,10 @@ class HaThermoCard extends HTMLElement {
       return;
     }
     if (action === "mode-auto" && zone) {
-      this._call({ type: `${DOMAIN}/set_profile`, profile: "__auto__", zones: [zone.id] }, "Automatico");
+      this._call(
+        { type: `${DOMAIN}/set_profile`, profile: "__auto__", zones: [this._thermostatTarget()] },
+        "Automatico",
+      );
       return;
     }
     if (action === "mode-manual" && zone) {
@@ -476,7 +493,10 @@ class HaThermoCard extends HTMLElement {
         this._toast("Imposta prima la pianificazione settimanale", true);
         return;
       }
-      this._call({ type: `${DOMAIN}/set_profile`, profile: pid, zones: [zone.id] }, "Manuale");
+      this._call(
+        { type: `${DOMAIN}/set_profile`, profile: pid, zones: [this._thermostatTarget()] },
+        "Manuale",
+      );
     }
   }
 
@@ -517,7 +537,11 @@ class HaThermoCard extends HTMLElement {
       const zone = this._zone();
       if (!zone) return;
       this._call(
-        { type: `${DOMAIN}/set_temperature`, zones: [zone.id], temperature: parseFloat(t.value) },
+        {
+          type: `${DOMAIN}/set_temperature`,
+          zones: [this._thermostatTarget()],
+          temperature: parseFloat(t.value),
+        },
         "Temperatura impostata",
       );
       return;
@@ -546,20 +570,23 @@ class HaThermoCardEditor extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = {
-      title: "Termostato",
-      show_graph: true,
-      show_graph_current: true,
-      show_graph_target: true,
-      show_slider: true,
-      show_status: true,
-      ...config,
-    };
+    this._config = migrateCardConfig(
+      {
+        title: "Termostato",
+        show_graph: true,
+        show_graph_current: true,
+        show_graph_target: true,
+        show_slider: true,
+        show_status: true,
+        ...config,
+      },
+      { zones: this._zones },
+    );
     this._render();
   }
 
   _zoneRecord() {
-    return findZone({ zones: this._zones }, this._config.zone);
+    return findZone({ zones: this._zones }, cardClimateFilter(this._config));
   }
 
   async _loadIntegration() {
@@ -575,11 +602,21 @@ class HaThermoCardEditor extends HTMLElement {
     this._render();
   }
 
-  async _saveWeekDay(zoneId, day, profileId) {
-    const schedule = { ...(this._weekly[zoneId] || {}) };
+  async _saveWeekDay(climateEntity, day, profileId) {
+    const schedule = { ...(this._weeklyForClimate(climateEntity) || {}) };
     schedule[day] = profileId;
-    await callWS(this._hass, { type: `${DOMAIN}/zone/weekly/set`, zone_id: zoneId, schedule });
-    this._weekly[zoneId] = schedule;
+    await callWS(this._hass, {
+      type: `${DOMAIN}/zone/weekly/set`,
+      climate_entity: climateEntity,
+      schedule,
+    });
+    const z = findZone({ zones: this._zones }, climateEntity);
+    if (z?.id) this._weekly[z.id] = schedule;
+  }
+
+  _weeklyForClimate(climateEntity) {
+    const z = findZone({ zones: this._zones }, climateEntity);
+    return z?.id ? this._weekly[z.id] : null;
   }
 
   _renderShell() {
@@ -594,7 +631,7 @@ class HaThermoCardEditor extends HTMLElement {
       .hint{color:var(--secondary-text-color);font-size:0.8rem}
     </style><div class="form">
       <label>Titolo<input data-f="title" value="${esc(this._config.title || "")}"></label>
-      <label>Termostato (zona HA Thermo)<select data-f="zone">${getZoneOptions(this._zones, false)}</select></label>
+      <label>Termostato<select data-f="climate_entity"></select></label>
       <div class="section">Profili (curve 24h condivise)</div>
       <ha-thermo-profile-editor></ha-thermo-profile-editor>
       <div class="section">Grafico</div>
@@ -621,7 +658,13 @@ class HaThermoCardEditor extends HTMLElement {
     const c = this._config;
     const g = (k) => this.shadowRoot.querySelector(`[data-f="${k}"]`);
     if (g("title")) g("title").value = c.title || "";
-    if (g("zone") && c.zone) g("zone").value = c.zone;
+    const climateSel = g("climate_entity");
+    if (climateSel && this._hass) {
+      climateSel.innerHTML = getClimateEntityOptions(
+        this._hass,
+        cardClimateFilter(c) || c.climate_entity,
+      );
+    }
     if (g("show_graph")) g("show_graph").checked = c.show_graph !== false;
     if (g("show_graph_current")) g("show_graph_current").checked = c.show_graph_current !== false;
     if (g("show_graph_target")) g("show_graph_target").checked = c.show_graph_target !== false;
@@ -634,13 +677,14 @@ class HaThermoCardEditor extends HTMLElement {
     if (!this._weeklyHost) return;
     const z = this._zoneRecord();
     if (!z) {
-      this._weeklyHost.innerHTML = `<p class="hint">Seleziona una zona termostato.</p>`;
+      this._weeklyHost.innerHTML = `<p class="hint">Seleziona un termostato.</p>`;
       return;
     }
     const schedule = this._weekly[z.id] || {};
+    const ce = z.climate_entity || cardClimateFilter(this._config);
     this._weeklyHost.innerHTML = WEEK_DAYS.map((day) => {
       const value = schedule[day] || "";
-      return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-weekly data-day="${day}" data-zone-id="${esc(z.id)}">${profileOptions(this._profiles, value)}</select></label>`;
+      return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-weekly data-day="${day}" data-climate="${esc(ce)}">${profileOptions(this._profiles, value)}</select></label>`;
     }).join("");
     this._weeklyHost.querySelectorAll("[data-weekly]").forEach((el) =>
       el.addEventListener("change", () => this._onWeeklyChange(el)),
@@ -655,26 +699,30 @@ class HaThermoCardEditor extends HTMLElement {
 
   _emitConfig() {
     const g = (k) => this.shadowRoot.querySelector(`[data-f="${k}"]`);
-    const prevZone = this._config.zone;
-    const config = {
-      ...this._config,
-      title: g("title")?.value,
-      zone: g("zone")?.value,
+    const prevClimate = cardClimateFilter(this._config);
+    const config = migrateCardConfig(
+      {
+        ...this._config,
+        title: g("title")?.value,
+        climate_entity: g("climate_entity")?.value,
       show_graph: g("show_graph")?.checked,
       show_graph_current: g("show_graph_current")?.checked,
       show_graph_target: g("show_graph_target")?.checked,
       show_slider: g("show_slider")?.checked,
-      show_status: g("show_status")?.checked,
-    };
+        show_status: g("show_status")?.checked,
+      },
+      { zones: this._zones },
+    );
+  delete config.zone;
     this._config = config;
-    if (config.zone !== prevZone) this._render();
+    if (cardClimateFilter(config) !== prevClimate) this._render();
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
   }
 
   async _onWeeklyChange(el) {
     if (!this._hass) return;
     try {
-      await this._saveWeekDay(el.dataset.zoneId, el.dataset.day, el.value);
+      await this._saveWeekDay(el.dataset.climate, el.dataset.day, el.value);
     } catch (e) {
       /* ignore */
     }

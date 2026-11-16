@@ -580,7 +580,7 @@ class ThermoOptionsFlow(OptionsFlow):
     async def async_step_zones(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        choices: dict[str, str] = {_ADD: "Aggiungi zona"}
+        choices: dict[str, str] = {_ADD: "Aggiungi termostato"}
         for zone in self._zones:
             zone_id = str(zone.get(CONF_ZONE_ID) or zone.get("id"))
             name = str(zone.get(CONF_ZONE_NAME) or zone_id)

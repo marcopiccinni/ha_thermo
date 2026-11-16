@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -561,6 +562,60 @@ class ThermoManager:
         for zone_id in self.zones:
             self._ensure_weekly_schedule(zone_id)
 
+    async def async_ensure_zone_for_climate(self, entity_id: str) -> Zone:
+        """Register a physical climate entity with HA Thermo on first use."""
+        climate = str(entity_id or "").strip()
+        if not climate.startswith("climate."):
+            raise ValueError("invalid_climate_entity")
+        existing = self._zone_for_climate(climate)
+        if existing is not None:
+            return existing
+        state = self.hass.states.get(climate)
+        if state is None:
+            raise ValueError("unknown_climate_entity")
+        name = state.name or climate
+        zone = Zone(
+            id=uuid.uuid4().hex[:12],
+            name=name,
+            climate_entity=climate,
+        )
+        self.zones[zone.id] = zone
+        self._ensure_weekly_schedule(zone.id)
+        options = dict(self.entry.options)
+        zone_list = list(options.get(CONF_ZONES, []))
+        zone_list.append(zone.to_dict())
+        options[CONF_ZONES] = zone_list
+        self.hass.config_entries.async_update_entry(self.entry, options=options)
+        self._sync_zones()
+        self._save()
+        self._notify()
+        return self.zones[zone.id]
+
+    async def async_resolve_zone_id(self, value: str) -> str:
+        """Resolve internal zone id from zone id or climate entity id."""
+        zone_key = str(value or "").strip()
+        if not zone_key:
+            raise ValueError("unknown_zone")
+        if zone_key in self.zones:
+            return zone_key
+        matched = self._zone_for_climate(zone_key)
+        if matched is not None:
+            return matched.id
+        if zone_key.startswith("climate."):
+            return (await self.async_ensure_zone_for_climate(zone_key)).id
+        raise ValueError("unknown_zone")
+
+    async def async_resolve_zone_ids(self, values: list[str] | None) -> list[str]:
+        """Resolve zone ids; auto-link physical thermostats on first use."""
+        if not values:
+            if not self.zones:
+                raise ValueError("no_zones_configured")
+            return list(self.zones.keys())
+        resolved: list[str] = []
+        for value in values:
+            resolved.append(await self.async_resolve_zone_id(str(value)))
+        return list(dict.fromkeys(resolved))
+
     async def async_set_zone_weekly(
         self, zone_id: str, schedule: dict[str, str]
     ) -> dict[str, str]:
@@ -603,7 +658,7 @@ class ThermoManager:
         duration: Any = None,
     ) -> None:
         """Pin a profile on zones."""
-        zone_ids = self._resolve_zone_ids(zones)
+        zone_ids = await self.async_resolve_zone_ids(zones)
         if profile_id == PROFILE_AUTO:
             for zone_id in zone_ids:
                 self.pinned_profiles.pop(zone_id, None)
@@ -643,8 +698,7 @@ class ThermoManager:
         source: str = "service",
     ) -> Bypass:
         """Start a timed bypass."""
-        import uuid
-        zone_ids = self._resolve_zone_ids(zones)
+        zone_ids = await self.async_resolve_zone_ids(zones)
         if temperature is not None and offset is not None:
             raise ValueError("bypass_value_ambiguous")
         now = dt_util.now()
@@ -690,7 +744,7 @@ class ThermoManager:
 
     async def async_stop_bypass(self, zones: list[str] | None = None) -> None:
         """Stop bypasses for zones."""
-        zone_ids = set(self._resolve_zone_ids(zones))
+        zone_ids = set(await self.async_resolve_zone_ids(zones))
         to_remove = [
             bid
             for bid, bypass in self.bypasses.items()
@@ -712,7 +766,7 @@ class ThermoManager:
         duration: Any = None,
     ) -> None:
         """Set a temporary temperature override."""
-        zone_ids = self._resolve_zone_ids(zones)
+        zone_ids = await self.async_resolve_zone_ids(zones)
         if temperature is None:
             raise ValueError("temperature_required")
         minutes = parse_duration_minutes(duration)
@@ -731,7 +785,7 @@ class ThermoManager:
     ) -> None:
         """Enable or disable control."""
         if zones:
-            zone_ids = self._resolve_zone_ids(zones)
+            zone_ids = await self.async_resolve_zone_ids(zones)
             if enabled:
                 self.disabled_zones.difference_update(zone_ids)
             else:
