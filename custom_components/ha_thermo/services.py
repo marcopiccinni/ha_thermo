@@ -17,6 +17,7 @@ from .const import (
     ATTR_PROFILE_ID,
     ATTR_SOURCE_ID,
     ATTR_TEMPERATURE,
+    ATTR_THERMOSTATS,
     ATTR_UNTIL,
     ATTR_ZONES,
     DOMAIN,
@@ -32,8 +33,12 @@ from .const import (
     SERVICE_UPDATE_PROFILE,
 )
 from .manager import ThermoManager
+from .service_fields import thermostats_from_payload
 
-_ZONES = vol.Optional(ATTR_ZONES)
+_THERMOSTATS_FIELD = {
+    vol.Optional(ATTR_THERMOSTATS): vol.All(cv.ensure_list, [cv.string]),
+    vol.Optional(ATTR_ZONES): vol.All(cv.ensure_list, [cv.string]),
+}
 _DURATION = vol.Optional(ATTR_DURATION)
 _UNTIL = vol.Optional(ATTR_UNTIL)
 
@@ -41,13 +46,13 @@ SCHEMAS: dict[str, vol.Schema] = {
     SERVICE_SET_PROFILE: vol.Schema(
         {
             vol.Required(ATTR_PROFILE): cv.string,
-            _ZONES: vol.All(cv.ensure_list, [cv.string]),
+            **_THERMOSTATS_FIELD,
             _DURATION: vol.Any(vol.Coerce(float), cv.string),
         }
     ),
     SERVICE_START_BYPASS: vol.Schema(
         {
-            _ZONES: vol.All(cv.ensure_list, [cv.string]),
+            **_THERMOSTATS_FIELD,
             vol.Optional(ATTR_TEMPERATURE): vol.Coerce(float),
             vol.Optional(ATTR_OFFSET): vol.Coerce(float),
             _DURATION: vol.Any(vol.Coerce(float), cv.string),
@@ -55,12 +60,10 @@ SCHEMAS: dict[str, vol.Schema] = {
             vol.Optional("source"): cv.string,
         }
     ),
-    SERVICE_STOP_BYPASS: vol.Schema(
-        {_ZONES: vol.All(cv.ensure_list, [cv.string])}
-    ),
+    SERVICE_STOP_BYPASS: vol.Schema(_THERMOSTATS_FIELD),
     SERVICE_SET_TEMPERATURE: vol.Schema(
         {
-            _ZONES: vol.All(cv.ensure_list, [cv.string]),
+            **_THERMOSTATS_FIELD,
             vol.Required(ATTR_TEMPERATURE): vol.Coerce(float),
             _DURATION: vol.Any(vol.Coerce(float), cv.string),
         }
@@ -68,7 +71,7 @@ SCHEMAS: dict[str, vol.Schema] = {
     SERVICE_ENABLE: vol.Schema(
         {
             vol.Required(ATTR_ENABLED): bool,
-            _ZONES: vol.All(cv.ensure_list, [cv.string]),
+            **_THERMOSTATS_FIELD,
         }
     ),
     SERVICE_CREATE_PROFILE: vol.Schema(
@@ -84,7 +87,7 @@ SCHEMAS: dict[str, vol.Schema] = {
         {
             vol.Required(ATTR_SOURCE_ID): cv.string,
             vol.Required("name"): cv.string,
-            _ZONES: vol.All(cv.ensure_list, [cv.string]),
+            **_THERMOSTATS_FIELD,
         }
     ),
     SERVICE_RELOAD: vol.Schema({}),
@@ -112,13 +115,13 @@ def async_register_services(hass: HomeAssistant) -> None:
     async def set_profile(call: ServiceCall) -> None:
         await _manager(hass).async_set_profile(
             call.data[ATTR_PROFILE],
-            call.data.get(ATTR_ZONES),
+            thermostats_from_payload(call.data),
             call.data.get(ATTR_DURATION),
         )
 
     async def start_bypass(call: ServiceCall) -> None:
         await _manager(hass).async_start_bypass(
-            zones=call.data.get(ATTR_ZONES),
+            thermostats=thermostats_from_payload(call.data),
             temperature=call.data.get(ATTR_TEMPERATURE),
             offset=call.data.get(ATTR_OFFSET),
             duration=call.data.get(ATTR_DURATION),
@@ -127,18 +130,18 @@ def async_register_services(hass: HomeAssistant) -> None:
         )
 
     async def stop_bypass(call: ServiceCall) -> None:
-        await _manager(hass).async_stop_bypass(call.data.get(ATTR_ZONES))
+        await _manager(hass).async_stop_bypass(thermostats_from_payload(call.data))
 
     async def set_temperature(call: ServiceCall) -> None:
         await _manager(hass).async_set_temperature(
-            call.data.get(ATTR_ZONES),
+            thermostats_from_payload(call.data),
             call.data[ATTR_TEMPERATURE],
             call.data.get(ATTR_DURATION),
         )
 
     async def enable(call: ServiceCall) -> None:
         await _manager(hass).async_enable(
-            call.data[ATTR_ENABLED], call.data.get(ATTR_ZONES)
+            call.data[ATTR_ENABLED], thermostats_from_payload(call.data)
         )
 
     async def create_profile(call: ServiceCall) -> None:
@@ -154,7 +157,7 @@ def async_register_services(hass: HomeAssistant) -> None:
         await _manager(hass).async_clone_profile(
             call.data[ATTR_SOURCE_ID],
             call.data["name"],
-            call.data.get(ATTR_ZONES),
+            thermostats_from_payload(call.data),
         )
 
     async def reload(call: ServiceCall) -> None:

@@ -132,7 +132,7 @@
       "description": "Activate a profile on all thermostats or on a selection.",
       "fields": {
         "profile": {"name": "Profile", "description": "Profile id or name, or __auto__."},
-        "zones": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."},
+        "thermostats": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."},
         "duration": {"name": "Duration", "description": "Optional hold in minutes or HH:MM."}
       }
     },
@@ -140,7 +140,7 @@
       "name": "Start bypass",
       "description": "Temporarily override the target.",
       "fields": {
-        "zones": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."},
+        "thermostats": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."},
         "temperature": {"name": "Temperature", "description": "Absolute temperature."},
         "offset": {"name": "Offset", "description": "Offset from target."},
         "duration": {"name": "Duration", "description": "Duration in minutes or HH:MM."},
@@ -152,14 +152,14 @@
       "name": "Stop bypass",
       "description": "Stop the active bypass.",
       "fields": {
-        "zones": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."}
+        "thermostats": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."}
       }
     },
     "set_temperature": {
       "name": "Set temperature",
       "description": "Set a temporary temperature.",
       "fields": {
-        "zones": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."},
+        "thermostats": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."},
         "temperature": {"name": "Temperature", "description": "Temperature to set."},
         "duration": {"name": "Duration", "description": "Duration in minutes or HH:MM."}
       }
@@ -169,7 +169,7 @@
       "description": "Enable or disable automatic control.",
       "fields": {
         "enabled": {"name": "Enabled", "description": "True to enable."},
-        "zones": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."}
+        "thermostats": {"name": "Thermostats", "description": "Climate entity ids (auto-linked on first use)."}
       }
     },
     "create_profile": {

@@ -2,7 +2,7 @@
 
 Integrazione custom Home Assistant (HACS) per gestire i termostati tramite profili condivisi e bypass temporanei. Include due card Lovelace (`ha-thermo-card`, `ha-thermo-graph-card`).
 
-**Una config entry per installazione**, con zone illimitate.
+**Una config entry per installazione**, con termostati illimitati.
 
 ## Caratteristiche
 
@@ -30,8 +30,8 @@ Integrazione custom Home Assistant (HACS) per gestire i termostati tramite profi
 ## Configurazione
 
 1. **Impostazioni** → **Dispositivi e servizi** → **Aggiungi integrazione** → **HA Thermo**.
-2. Configura le zone dalle **Opzioni** dell'integrazione:
-   - Aggiungi zone con id, nome, entità climate, sensore temperatura opzionale, min/max, default.
+2. Configura i termostati dalle **Opzioni** dell'integrazione:
+   - Aggiungi termostati con nome, entità `climate`, sensore temperatura opzionale, min/max, default.
    - Modifica temperature predefinite dei profili.
    - Configura hold manuale, intervallo di riasserzione, scansione.
 
@@ -44,7 +44,7 @@ Card per un singolo termostato: grafico profilo di oggi, temperatura, automatico
 ```yaml
 type: custom:ha-thermo-card
 title: Studio
-zone: climate.studio
+climate_entity: climate.studio
 show_graph: true
 show_slider: true
 show_weekly: true
@@ -54,7 +54,7 @@ show_status: true
 | Opzione | Default | Descrizione |
 | --- | --- | --- |
 | `title` | `Termostato` | Titolo della card. |
-| `zone` | — | Entità `climate` della zona. |
+| `climate_entity` | — | Entità `climate` del termostato. |
 | `show_graph` | `true` | Mini grafico **storico 24h** (stile History HA). |
 | `show_slider` | `true` | Slider e ± in modalità **Manuale** (in automatico solo lettura). |
 | `show_weekly` | `true` | Abilita icona matita per pianificazione Lun–Dom. |
@@ -69,7 +69,7 @@ Storico dal **recorder** HA: setpoint del termostato (attributi climate) e tempe
 ```yaml
 type: custom:ha-thermo-graph-card
 title: Studio
-zone: studio
+climate_entity: climate.studio
 time_range: 48h
 room_sensors:
   - sensor.temperatura_sala
@@ -85,8 +85,8 @@ color_profile: "#4caf50"
 | Opzione | Default | Descrizione |
 | --- | --- | --- |
 | `title` | `Grafico` | Titolo della card. |
-| `zone` / `climate_entity` | — | Zona HA Thermo o entità `climate`. |
-| `room_sensors` | `[]` | Sensori `sensor.*` (ambiente); se vuoto usa `current_temperature` del climate o il sensore configurato in zona. |
+| `climate_entity` | — | Entità `climate` del termostato. |
+| `room_sensors` | `[]` | Sensori `sensor.*` (ambiente); se vuoto usa `current_temperature` del climate o il sensore configurato nel termostato. |
 | `time_range` | `48h` | `6h`, `12h`, `24h`, `48h`, `7d` (oppure `hours_to_show` 1–168). |
 | `height` | `200` | Altezza grafico in px. |
 | `min_temp` / `max_temp` | auto | Limiti Y (vuoto = auto con margine). |
@@ -97,7 +97,7 @@ color_profile: "#4caf50"
 
 ## Logica di controllo
 
-Per ogni zona il target effettivo viene risolto in questo ordine:
+Per ogni termostato il target effettivo viene risolto in questo ordine:
 
 1. **Bypass attivo** → temperatura assoluta, offset sul target di profilo o freeze.
 2. **Override manuale** → temperatura impostata a mano sul termostato, con scadenza.
@@ -106,7 +106,7 @@ Per ogni zona il target effettivo viene risolto in questo ordine:
 
 ## Servizi
 
-Tutti i servizi accettano `zones` come lista di id zona oppure entità `climate.*`. Se omesso, si applicano a tutte le zone.
+Tutti i servizi accettano `thermostats` come lista di entità `climate.*` (collegate automaticamente al primo uso). Se omesso, si applicano a tutti i termostati. Il campo `zones` resta accettato come alias deprecato per le automazioni esistenti.
 
 ### Imposta profilo
 
@@ -114,7 +114,7 @@ Tutti i servizi accettano `zones` come lista di id zona oppure entità `climate.
 action: ha_thermo.set_profile
 data:
   profile: comfort
-  zones: [climate.studio]
+  thermostats: [climate.studio]
   duration: 120
 ```
 
@@ -125,7 +125,7 @@ Usa `profile: __auto__` per tornare a seguire il profilo attivo. `duration` è i
 ```yaml
 action: ha_thermo.start_bypass
 data:
-  zones: [climate.studio]
+  thermostats: [climate.studio]
   temperature: 22.5
   duration: 60
 ```
@@ -133,7 +133,7 @@ data:
 ```yaml
 action: ha_thermo.start_bypass
 data:
-  zones: [climate.soggiorno]
+  thermostats: [climate.soggiorno]
   offset: -1.5
   until: "2026-11-02T22:00:00+01:00"
 ```
@@ -143,7 +143,7 @@ Senza `temperature` e `offset` il bypass congela il target corrente. Usa `source
 ```yaml
 action: ha_thermo.stop_bypass
 data:
-  zones: [climate.studio]
+  thermostats: [climate.studio]
 ```
 
 ### Temperatura temporanea
@@ -151,7 +151,7 @@ data:
 ```yaml
 action: ha_thermo.set_temperature
 data:
-  zones: [climate.studio]
+  thermostats: [climate.studio]
   temperature: 21.5
   duration: 45
 ```
@@ -162,14 +162,14 @@ data:
 action: ha_thermo.enable
 data:
   enabled: false
-  zones: [climate.studio]
+  thermostats: [climate.studio]
 ```
 
 ### Gestione profili
 
 - `ha_thermo.create_profile` / `ha_thermo.update_profile` con `profile` (oggetto completo).
 - `ha_thermo.delete_profile` con `profile_id`.
-- `ha_thermo.clone_profile` con `source_id`, `name` e `zones` opzionale.
+- `ha_thermo.clone_profile` con `source_id`, `name` e `thermostats` opzionale.
 - `ha_thermo.reload`.
 
 ## Automazioni esempio
@@ -189,7 +189,7 @@ condition:
 action:
   - action: ha_thermo.set_temperature
     data:
-      zones: [climate.studio, climate.soggiorno]
+      thermostats: [climate.studio, climate.soggiorno]
       temperature: 17
 ```
 
@@ -205,7 +205,7 @@ action:
   - action: ha_thermo.set_profile
     data:
       profile: comfort
-      zones: [climate.studio, climate.soggiorno]
+      thermostats: [climate.studio, climate.soggiorno]
 ```
 
 ### Disattivazione completa (l'integrazione non scrive)
@@ -219,7 +219,7 @@ action:
   - action: ha_thermo.enable
     data:
       enabled: false
-      zones: [climate.studio]
+      thermostats: [climate.studio]
 ```
 
 ```yaml
@@ -231,24 +231,24 @@ action:
   - action: ha_thermo.enable
     data:
       enabled: true
-      zones: [climate.studio]
+      thermostats: [climate.studio]
   # L'integrazione reimposta automaticamente il profilo attivo
 ```
 
 ## Entità create
 
-Per ogni zona:
+Per ogni termostato registrato:
 
 | Entità | Descrizione |
 | --- | --- |
-| `sensor.<zona>_temperatura_attuale` | Temperatura ambiente dal sensore dedicato o dal termostato. |
-| `sensor.<zona>_temperatura_target` | Target effettivo. |
-| `sensor.<zona>_prossimo_cambio` | Prossimo cambio previsto (ogni ora). |
-| `sensor.<zona>_bypass_rimanente` | Secondi rimanenti del bypass. |
-| `binary_sensor.<zona>_bypass_attivo` | Bypass in corso. |
-| `binary_sensor.<zona>_override_manuale` | Override manuale in corso. |
-| `select.<zona>_profilo` | Profilo fissato o `Auto`. |
-| `switch.<zona>_controllo_automatico` | Abilita il controllo della zona. |
+| `sensor.<nome>_temperatura_attuale` | Temperatura ambiente dal sensore dedicato o dal termostato. |
+| `sensor.<nome>_temperatura_target` | Target effettivo. |
+| `sensor.<nome>_prossimo_cambio` | Prossimo cambio previsto (ogni ora). |
+| `sensor.<nome>_bypass_rimanente` | Secondi rimanenti del bypass. |
+| `binary_sensor.<nome>_bypass_attivo` | Bypass in corso. |
+| `binary_sensor.<nome>_override_manuale` | Override manuale in corso. |
+| `select.<nome>_profilo` | Profilo fissato o `Auto`. |
+| `switch.<nome>_controllo_automatico` | Abilita il controllo del termostato. |
 
 ## Import/Export profili
 
@@ -275,7 +275,7 @@ custom_components/ha_thermo/
 ├── config_flow.py       configurazione e opzioni
 ├── coordinator.py       scansione periodica
 ├── manager.py           risoluzione target e stato persistente
-├── models.py            Zone, Profile, Bypass
+├── models.py            Profile, Bypass (registro termostati interno)
 ├── bypass.py            helper per bypass temporanei
 ├── storage.py           Store versionato
 ├── entity.py            base entity

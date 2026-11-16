@@ -5,7 +5,7 @@ set_profile:
       example: "comfort"
       selector:
         text:
-    zones:
+    thermostats:
       example: ["climate.studio"]
       selector:
         entity:
@@ -18,7 +18,7 @@ set_profile:
 
 start_bypass:
   fields:
-    zones:
+    thermostats:
       example: ["climate.studio"]
       selector:
         entity:
@@ -55,7 +55,7 @@ start_bypass:
 
 stop_bypass:
   fields:
-    zones:
+    thermostats:
       example: ["climate.studio"]
       selector:
         entity:
@@ -64,7 +64,7 @@ stop_bypass:
 
 set_temperature:
   fields:
-    zones:
+    thermostats:
       example: ["climate.studio"]
       selector:
         entity:
@@ -91,7 +91,7 @@ enable:
       example: true
       selector:
         boolean:
-    zones:
+    thermostats:
       example: ["climate.studio"]
       selector:
         entity:
@@ -132,7 +132,7 @@ clone_profile:
       example: "Comfort studio"
       selector:
         text:
-    zones:
+    thermostats:
       selector:
         entity:
           domain: climate

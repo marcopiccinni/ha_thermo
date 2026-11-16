@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.6
+
+- **Servizi**: campo **`thermostats`** (selector entità `climate`, multiplo) al posto di `zones` in `services.yaml`, schemi Python, WebSocket card e traduzioni **Termostati/Thermostats**. `zones` resta accettato come alias deprecato con warning in log.
+- **Documentazione**: README e testi utente aggiornati (termostato al posto di zona dove visibile). Bundle card `?v=0.4.6`.
+
 ## 0.4.5
 
 - **Termostato fisico (non più «zona»)**: nell’editor Lovelace delle card il menu **Termostato** elenca tutte le entità `climate` di Home Assistant (non più le zone interne vuote). La card salva `climate_entity` e collega automaticamente il termostato all’integrazione al primo uso (`thermostat/ensure`).

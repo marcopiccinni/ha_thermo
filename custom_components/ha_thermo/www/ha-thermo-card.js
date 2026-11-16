@@ -25,8 +25,8 @@ import {
   clampChartHeight,
   measureHistoryChartHost,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.4.5";
-import "./ha-thermo-profile-editor.js?v=0.4.5";
+} from "./ha-thermo-common.js?v=0.4.6";
+import "./ha-thermo-profile-editor.js?v=0.4.6";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -481,7 +481,7 @@ class HaThermoCard extends HTMLElement {
     }
     if (action === "mode-auto" && zone) {
       this._call(
-        { type: `${DOMAIN}/set_profile`, profile: "__auto__", zones: [this._thermostatTarget()] },
+        { type: `${DOMAIN}/set_profile`, profile: "__auto__", thermostats: [this._thermostatTarget()] },
         "Automatico",
       );
       return;
@@ -494,7 +494,7 @@ class HaThermoCard extends HTMLElement {
         return;
       }
       this._call(
-        { type: `${DOMAIN}/set_profile`, profile: pid, zones: [this._thermostatTarget()] },
+        { type: `${DOMAIN}/set_profile`, profile: pid, thermostats: [this._thermostatTarget()] },
         "Manuale",
       );
     }
@@ -539,7 +539,7 @@ class HaThermoCard extends HTMLElement {
       this._call(
         {
           type: `${DOMAIN}/set_temperature`,
-          zones: [this._thermostatTarget()],
+          thermostats: [this._thermostatTarget()],
           temperature: parseFloat(t.value),
         },
         "Temperatura impostata",

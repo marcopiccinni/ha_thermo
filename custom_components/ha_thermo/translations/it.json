@@ -90,7 +90,7 @@
       },
       "profile_delete_confirm": {
         "title": "Elimina {profile}?",
-        "description": "I giorni in pianificazione useranno il profilo {fallback}. Zone/giorni interessati: {impact}.",
+        "description": "I giorni in pianificazione useranno il profilo {fallback}. Termostati/giorni interessati: {impact}.",
         "data": {"confirm": "Confermo l’eliminazione"}
       }
     },
@@ -134,7 +134,7 @@
       "description": "Attiva un profilo su tutti i termostati o su una selezione.",
       "fields": {
         "profile": {"name": "Profilo", "description": "Id o nome del profilo, oppure __auto__."},
-        "zones": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."},
+        "thermostats": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."},
         "duration": {"name": "Durata", "description": "Durata opzionale in minuti o HH:MM."}
       }
     },
@@ -142,7 +142,7 @@
       "name": "Avvia bypass",
       "description": "Forza temporaneamente il target.",
       "fields": {
-        "zones": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."},
+        "thermostats": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."},
         "temperature": {"name": "Temperatura", "description": "Temperatura assoluta."},
         "offset": {"name": "Offset", "description": "Offset rispetto al target."},
         "duration": {"name": "Durata", "description": "Durata in minuti o HH:MM."},
@@ -154,14 +154,14 @@
       "name": "Ferma bypass",
       "description": "Ferma il bypass in corso.",
       "fields": {
-        "zones": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."}
+        "thermostats": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."}
       }
     },
     "set_temperature": {
       "name": "Imposta temperatura",
       "description": "Imposta una temperatura temporanea.",
       "fields": {
-        "zones": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."},
+        "thermostats": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."},
         "temperature": {"name": "Temperatura", "description": "Temperatura da impostare."},
         "duration": {"name": "Durata", "description": "Durata in minuti o HH:MM."}
       }
@@ -171,7 +171,7 @@
       "description": "Abilita o disabilita il controllo automatico.",
       "fields": {
         "enabled": {"name": "Abilitato", "description": "True per abilitare."},
-        "zones": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."}
+        "thermostats": {"name": "Termostati", "description": "Entità climate (collegamento automatico al primo uso)."}
       }
     },
     "create_profile": {

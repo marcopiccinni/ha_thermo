@@ -13,14 +13,20 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     ATTR_PROFILE_ID,
     ATTR_SOURCE_ID,
+    ATTR_THERMOSTATS,
     ATTR_ZONE_ID,
+    ATTR_ZONES,
     CONF_CLIMATE_ENTITY,
     DOMAIN,
 )
 from .manager import ThermoManager
 from .models import Profile
+from .service_fields import thermostats_from_payload
 
-_ZONES = vol.Optional("zones")
+_THERMOSTATS_WS: dict[Any, Any] = {
+    vol.Optional(ATTR_THERMOSTATS): vol.All(cv.ensure_list, [cv.string]),
+    vol.Optional(ATTR_ZONES): vol.All(cv.ensure_list, [cv.string]),
+}
 _DURATION = vol.Optional("duration")
 _DURATION_SCHEMA = vol.Any(vol.Coerce(float), cv.string)
 
@@ -74,7 +80,7 @@ async def ws_get_config(
     {
         vol.Required("type"): f"{DOMAIN}/set_profile",
         vol.Required("profile"): vol.Any(cv.string, vol.Equal("__auto__")),
-        _ZONES: vol.All(cv.ensure_list, [cv.string]),
+        **_THERMOSTATS_WS,
         _DURATION: _DURATION_SCHEMA,
     }
 )
@@ -91,7 +97,7 @@ async def ws_set_profile(
         connection,
         msg,
         lambda: manager.async_set_profile(
-            msg["profile"], msg.get("zones"), msg.get("duration")
+            msg["profile"], thermostats_from_payload(msg), msg.get("duration")
         ),
     )
 
@@ -99,7 +105,7 @@ async def ws_set_profile(
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/bypass/start",
-        _ZONES: vol.All(cv.ensure_list, [cv.string]),
+        **_THERMOSTATS_WS,
         vol.Optional("temperature"): vol.Coerce(float),
         vol.Optional("offset"): vol.Coerce(float),
         _DURATION: _DURATION_SCHEMA,
@@ -120,7 +126,7 @@ async def ws_start_bypass(
         connection,
         msg,
         lambda: manager.async_start_bypass(
-            zones=msg.get("zones"),
+            thermostats=thermostats_from_payload(msg),
             temperature=msg.get("temperature"),
             offset=msg.get("offset"),
             duration=msg.get("duration"),
@@ -133,7 +139,7 @@ async def ws_start_bypass(
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/bypass/stop",
-        _ZONES: vol.All(cv.ensure_list, [cv.string]),
+        **_THERMOSTATS_WS,
     }
 )
 @websocket_api.async_response
@@ -148,14 +154,14 @@ async def ws_stop_bypass(
     await _execute(
         connection,
         msg,
-        lambda: manager.async_stop_bypass(msg.get("zones")),
+        lambda: manager.async_stop_bypass(thermostats_from_payload(msg)),
     )
 
 
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/set_temperature",
-        _ZONES: vol.All(cv.ensure_list, [cv.string]),
+        **_THERMOSTATS_WS,
         vol.Required("temperature"): vol.Coerce(float),
         _DURATION: _DURATION_SCHEMA,
     }
@@ -173,7 +179,7 @@ async def ws_set_temperature(
         connection,
         msg,
         lambda: manager.async_set_temperature(
-            msg.get("zones"),
+            thermostats_from_payload(msg),
             msg["temperature"],
             msg.get("duration"),
         ),
@@ -187,7 +193,7 @@ async def _weekly_zone_id(manager: ThermoManager, msg: dict) -> str:
         return await manager.async_resolve_zone_id(str(zone_id))
     if climate_entity:
         return (await manager.async_ensure_zone_for_climate(str(climate_entity))).id
-    raise ValueError("zone_required")
+    raise ValueError("thermostat_required")
 
 
 @websocket_api.websocket_command(
@@ -208,7 +214,7 @@ async def ws_set_zone_weekly(
     if manager is None:
         return
     if not msg.get(ATTR_ZONE_ID) and not msg.get(CONF_CLIMATE_ENTITY):
-        connection.send_error(msg["id"], "invalid_input", "zone_required")
+        connection.send_error(msg["id"], "invalid_input", "thermostat_required")
         return
 
     async def _set_weekly() -> dict[str, str]:
@@ -245,7 +251,7 @@ async def ws_thermostat_ensure(
     {
         vol.Required("type"): f"{DOMAIN}/set_enabled",
         vol.Required("enabled"): bool,
-        _ZONES: vol.All(cv.ensure_list, [cv.string]),
+        **_THERMOSTATS_WS,
     }
 )
 @websocket_api.async_response
@@ -260,7 +266,7 @@ async def ws_set_enabled(
     await _execute(
         connection,
         msg,
-        lambda: manager.async_enable(msg["enabled"], msg.get("zones")),
+        lambda: manager.async_enable(msg["enabled"], thermostats_from_payload(msg)),
     )
 
 
@@ -348,7 +354,7 @@ async def ws_delete_profile(
         vol.Required("type"): f"{DOMAIN}/profile/clone",
         vol.Required(ATTR_SOURCE_ID): cv.string,
         vol.Required("name"): cv.string,
-        _ZONES: vol.All(cv.ensure_list, [cv.string]),
+        **_THERMOSTATS_WS,
     }
 )
 @websocket_api.require_admin
@@ -366,7 +372,9 @@ async def ws_clone_profile(
         msg,
         lambda: _created(
             manager.async_clone_profile(
-                msg[ATTR_SOURCE_ID], msg["name"], msg.get("zones")
+                msg[ATTR_SOURCE_ID],
+                msg["name"],
+                thermostats_from_payload(msg),
             )
         ),
     )

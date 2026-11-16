@@ -654,11 +654,11 @@ class ThermoManager:
     async def async_set_profile(
         self,
         profile_id: str,
-        zones: list[str] | None = None,
+        thermostats: list[str] | None = None,
         duration: Any = None,
     ) -> None:
-        """Pin a profile on zones."""
-        zone_ids = await self.async_resolve_zone_ids(zones)
+        """Pin a profile on one or more thermostats."""
+        zone_ids = await self.async_resolve_zone_ids(thermostats)
         if profile_id == PROFILE_AUTO:
             for zone_id in zone_ids:
                 self.pinned_profiles.pop(zone_id, None)
@@ -690,7 +690,7 @@ class ThermoManager:
 
     async def async_start_bypass(
         self,
-        zones: list[str] | None = None,
+        thermostats: list[str] | None = None,
         temperature: float | None = None,
         offset: float | None = None,
         duration: Any = None,
@@ -698,7 +698,7 @@ class ThermoManager:
         source: str = "service",
     ) -> Bypass:
         """Start a timed bypass."""
-        zone_ids = await self.async_resolve_zone_ids(zones)
+        zone_ids = await self.async_resolve_zone_ids(thermostats)
         if temperature is not None and offset is not None:
             raise ValueError("bypass_value_ambiguous")
         now = dt_util.now()
@@ -742,9 +742,9 @@ class ThermoManager:
         self._notify()
         return created[0]
 
-    async def async_stop_bypass(self, zones: list[str] | None = None) -> None:
-        """Stop bypasses for zones."""
-        zone_ids = set(await self.async_resolve_zone_ids(zones))
+    async def async_stop_bypass(self, thermostats: list[str] | None = None) -> None:
+        """Stop bypasses for thermostats."""
+        zone_ids = set(await self.async_resolve_zone_ids(thermostats))
         to_remove = [
             bid
             for bid, bypass in self.bypasses.items()
@@ -761,12 +761,12 @@ class ThermoManager:
 
     async def async_set_temperature(
         self,
-        zones: list[str] | None = None,
+        thermostats: list[str] | None = None,
         temperature: float | None = None,
         duration: Any = None,
     ) -> None:
         """Set a temporary temperature override."""
-        zone_ids = await self.async_resolve_zone_ids(zones)
+        zone_ids = await self.async_resolve_zone_ids(thermostats)
         if temperature is None:
             raise ValueError("temperature_required")
         minutes = parse_duration_minutes(duration)
@@ -781,11 +781,11 @@ class ThermoManager:
         self._notify()
 
     async def async_enable(
-        self, enabled: bool, zones: list[str] | None = None
+        self, enabled: bool, thermostats: list[str] | None = None
     ) -> None:
         """Enable or disable control."""
-        if zones:
-            zone_ids = await self.async_resolve_zone_ids(zones)
+        if thermostats:
+            zone_ids = await self.async_resolve_zone_ids(thermostats)
             if enabled:
                 self.disabled_zones.difference_update(zone_ids)
             else:
@@ -864,7 +864,7 @@ class ThermoManager:
         }
 
     async def async_clone_profile(
-        self, source_id: str, name: str, zones: list[str] | None = None
+        self, source_id: str, name: str, thermostats: list[str] | None = None
     ) -> Profile:
         """Clone a profile."""
         import uuid
@@ -878,7 +878,7 @@ class ThermoManager:
         new_profile = copy.deepcopy(source)
         new_profile.id = new_id
         new_profile.name = name
-        _ = zones
+        _ = thermostats
         new_profile.ensure_hourly()
         self.profiles[new_id] = new_profile
         self._save()

@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Grazie per il report. Includi sempre versione, configurazione delle zone
+        Grazie per il report. Includi sempre versione, configurazione dei termostati
         e i log rilevanti, senza token o dati personali.
   - type: input
     id: version
@@ -21,9 +21,9 @@ body:
     validations:
       required: true
   - type: textarea
-    id: zones
+    id: thermostats
     attributes:
-      label: Zone e termostati
+      label: Termostati
       description: Elenca le entità climate usate e i profili/attivatori coinvolti.
     validations:
       required: false
