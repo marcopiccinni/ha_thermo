@@ -880,6 +880,7 @@ class ThermoManager:
         new_profile.name = name
         _ = thermostats
         new_profile.ensure_hourly()
+        new_profile.validate()
         self.profiles[new_id] = new_profile
         self._save()
         self._fire_profiles_changed()

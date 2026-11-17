@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .manager import ThermoManager
 
 PROFILE_NEW = "new_profile"
+LEGACY_PROFILE_NEW = "__new__"
 
 HOUR_SECTION_KEYS = ("night", "morning", "afternoon", "evening")
 

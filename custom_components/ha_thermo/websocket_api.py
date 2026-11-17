@@ -296,11 +296,10 @@ async def ws_create_profile(
     manager = _manager(hass, connection, msg)
     if manager is None:
         return
-    await _execute(
-        connection,
-        msg,
-        lambda: _created(manager.async_create_profile(msg["profile"])),
-    )
+    async def _create_profile() -> dict[str, Any]:
+        return await _created(manager.async_create_profile(msg["profile"]))
+
+    await _execute(connection, msg, _create_profile)
 
 
 @websocket_api.websocket_command(
@@ -319,11 +318,10 @@ async def ws_update_profile(
     manager = _manager(hass, connection, msg)
     if manager is None:
         return
-    await _execute(
-        connection,
-        msg,
-        lambda: _updated(manager.async_update_profile(msg["profile"])),
-    )
+    async def _update_profile() -> dict[str, Any]:
+        return await _updated(manager.async_update_profile(msg["profile"]))
+
+    await _execute(connection, msg, _update_profile)
 
 
 @websocket_api.websocket_command(
@@ -367,17 +365,16 @@ async def ws_clone_profile(
     manager = _manager(hass, connection, msg)
     if manager is None:
         return
-    await _execute(
-        connection,
-        msg,
-        lambda: _created(
+    async def _clone_profile() -> dict[str, Any]:
+        return await _created(
             manager.async_clone_profile(
                 msg[ATTR_SOURCE_ID],
                 msg["name"],
                 thermostats_from_payload(msg),
             )
-        ),
-    )
+        )
+
+    await _execute(connection, msg, _clone_profile)
 
 
 @websocket_api.websocket_command(
@@ -453,13 +450,14 @@ async def ws_import_profiles(
     if manager is None:
         return
 
-    def _do_import():
+    async def _do_import() -> None:
         mode = msg.get("mode", "merge")
         if mode == "replace":
             manager.profiles.clear()
         for item in msg["profiles"]:
             try:
                 profile = Profile.from_dict(item)
+                profile.validate()
                 manager.profiles[profile.id] = profile
             except (TypeError, ValueError) as err:
                 raise ValueError(f"invalid_profile: {err}")

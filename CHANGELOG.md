@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.7
+
+- **Fix profili (opzioni integrazione)**: i form «Nuovo profilo» / «Duplica» / «Rinomina» usavano step id (`profile_name_new`, ecc.) senza handler `async_step_*` corrispondenti: l’invio del nome falliva. Aggiunti i delegati; accettato anche il valore legacy `__new__` nel selettore.
+- **WebSocket**: handler `profile/create`, `update`, `clone` e `profiles/import` corretti (async); `clone` valida il profilo.
+- **Test**: regressione options flow (nuovo, duplica, rinomina) con `pytest-homeassistant-custom-component`.
+
 ## 0.4.6
 
 - **Servizi**: campo **`thermostats`** (selector entità `climate`, multiplo) al posto di `zones` in `services.yaml`, schemi Python, WebSocket card e traduzioni **Termostati/Thermostats**. `zones` resta accettato come alias deprecato con warning in log.

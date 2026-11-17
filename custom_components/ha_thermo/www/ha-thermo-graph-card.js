@@ -28,8 +28,8 @@ import {
   measureHistoryChartHost,
   clampChartHeight,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.4.6";
-import "./ha-thermo-profile-editor.js?v=0.4.6";
+} from "./ha-thermo-common.js?v=0.4.7";
+import "./ha-thermo-profile-editor.js?v=0.4.7";
 
 const DEFAULT_CONFIG = () => ({
   title: "Grafico",

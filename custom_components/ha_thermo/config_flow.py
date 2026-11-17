@@ -54,6 +54,7 @@ from .manager import ThermoManager
 from .models import Profile, Zone, slugify
 from .profile_flow_helpers import (
     HOUR_SECTIONS,
+    LEGACY_PROFILE_NEW,
     PROFILE_NEW,
     curve_preview,
     flatten_section_hours,
@@ -271,7 +272,7 @@ class ThermoOptionsFlow(OptionsFlow):
 
         if user_input is not None:
             selected = str(user_input.get("profile") or "")
-            if selected == PROFILE_NEW:
+            if selected in {PROFILE_NEW, LEGACY_PROFILE_NEW}:
                 self._profile_name_mode = "new"
                 self._edit_profile_id = None
                 return await self.async_step_profile_name()
@@ -388,6 +389,25 @@ class ThermoOptionsFlow(OptionsFlow):
                 "curve_preview": preview,
             },
         )
+
+    async def async_step_profile_name_new(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Options step id used for translations; delegates to profile_name."""
+        self._profile_name_mode = "new"
+        return await self.async_step_profile_name(user_input)
+
+    async def async_step_profile_name_duplicate(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        self._profile_name_mode = "duplicate"
+        return await self.async_step_profile_name(user_input)
+
+    async def async_step_profile_name_rename(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        self._profile_name_mode = "rename"
+        return await self.async_step_profile_name(user_input)
 
     async def async_step_profile_name(
         self, user_input: dict[str, Any] | None = None
