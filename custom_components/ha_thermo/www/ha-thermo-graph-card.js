@@ -30,7 +30,7 @@ import {
   measureHistoryChartHost,
   clampChartHeight,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.4.8";
+} from "./ha-thermo-common.js?v=0.4.9";
 
 const DEFAULT_CONFIG = () => ({
   title: "Grafico",

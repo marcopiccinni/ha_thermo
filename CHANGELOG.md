@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.9
+
+- **Card**: editor **curva 24h** sulla vista card (`show_profile_chart`); sul componente `manage-profiles=false` (niente crea/elimina, solo modifica orari e salva). Bundle `?v=0.4.9`.
+
 ## 0.4.8
 
 - **Editor card**: la pianificazione settimanale (lun–dom) è nell’**integrazione**, non nel YAML della card. Salvataggio immediato via WebSocket con collegamento automatico del termostato `climate.*`; dopo ogni giorno modificato viene emesso `config-changed` così il pulsante **Salva** dell’editor Lovelace si abilita; feedback visivo in editor.
