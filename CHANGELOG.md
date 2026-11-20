@@ -4,7 +4,7 @@
 
 - **Editor card**: la pianificazione settimanale (lun–dom) è nell’**integrazione**, non nel YAML della card. Salvataggio immediato via WebSocket con collegamento automatico del termostato `climate.*`; dopo ogni giorno modificato viene emesso `config-changed` così il pulsante **Salva** dell’editor Lovelace si abilita; feedback visivo in editor.
 - **Editor card**: rimossa gestione curve profili (resta in Impostazioni integrazione → Profili).
-- **Card**: menu a tendina **Profilo** (Automatico + profili) per il termostato selezionato; opzione editor `show_profile_picker`. Entità `select.<termostato>_profile` (es. `select.heatpump_profile`) per automazioni.
+- **Card**: menu a tendina **Profilo** (Automatico + profili) per il termostato selezionato; opzione editor `show_profile_picker`. Editor **curva 24h** sulla card (`show_profile_chart`, senza crea/elimina profili). Entità `select.<termostato>_profile` (es. `select.heatpump_profile`) per automazioni.
 - **Fix integrazione**: `entry.runtime_data` impostato prima del caricamento piattaforme (select/sensor funzionanti su HA recenti).
 - Bundle card `?v=0.4.8`.
 

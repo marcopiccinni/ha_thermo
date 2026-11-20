@@ -15,6 +15,14 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const snap = (v) => Math.round(clamp(v, MIN_T, MAX_T) / STEP) * STEP;
 
 export class HaThermoProfileEditor extends HTMLElement {
+  static get observedAttributes() {
+    return ["manage-profiles"];
+  }
+
+  get manageProfiles() {
+    return this.getAttribute("manage-profiles") !== "false";
+  }
+
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
@@ -41,6 +49,10 @@ export class HaThermoProfileEditor extends HTMLElement {
 
   connectedCallback() {
     if (!this._hass) this._paint();
+  }
+
+  attributeChangedCallback() {
+    if (this.isConnected) this._paint();
   }
 
   disconnectedCallback() {
@@ -93,6 +105,12 @@ export class HaThermoProfileEditor extends HTMLElement {
     const p = this._profile();
     const name = p?.name || "—";
     const canDelete = p && !BUILTIN.has(p.id);
+    const crud = this.manageProfiles
+      ? `<button type="button" class="btn" data-a="new">Nuovo</button>
+      <button type="button" class="btn" data-a="dup">Duplica</button>
+      <button type="button" class="btn" data-a="rename">Rinomina</button>
+      <button type="button" class="btn" data-a="del" ${canDelete ? "" : "disabled"}>Elimina</button>`
+      : "";
     this.shadowRoot.innerHTML = `<style>
       :host{display:block;font-size:var(--ha-font-size-m,14px);color:var(--primary-text-color)}
       .toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 10px}
@@ -111,10 +129,7 @@ export class HaThermoProfileEditor extends HTMLElement {
     </style>
     <div class="toolbar">
       <select data-sel aria-label="Profilo">${profileOptions(this._profiles, this._selectedId)}</select>
-      <button type="button" class="btn" data-a="new">Nuovo</button>
-      <button type="button" class="btn" data-a="dup">Duplica</button>
-      <button type="button" class="btn" data-a="rename">Rinomina</button>
-      <button type="button" class="btn" data-a="del" ${canDelete ? "" : "disabled"}>Elimina</button>
+      ${crud}
       <button type="button" class="btn primary" data-a="save" ${this._dirty && !this._busy ? "" : "disabled"}>Salva</button>
     </div>
     <div class="status ${this._statusClass()}">${esc(this._status || (this._dirty ? "Modifiche non salvate" : `Profilo: ${name}`))}</div>
