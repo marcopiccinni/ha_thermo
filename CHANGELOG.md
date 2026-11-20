@@ -2,7 +2,9 @@
 
 ## 0.4.9
 
-- **Card**: editor **curva 24h** sulla vista card (`show_profile_chart`); sul componente `manage-profiles=false` (niente crea/elimina, solo modifica orari e salva). Bundle `?v=0.4.9`.
+- **Card**: editor **curva 24h** sulla vista card (`show_profile_chart`); `manage-profiles=false` (niente crea/elimina, solo modifica orari e salva).
+- **Editor card**: griglia settimana usa il termostato scelto nel dropdown del form, con collegamento automatico `thermostat/ensure` se manca l’associazione; ricarico integrazione al cambio termostato.
+- Bundle card `?v=0.4.9`.
 
 ## 0.4.8
 

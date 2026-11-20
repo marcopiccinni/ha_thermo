@@ -432,14 +432,22 @@ class HaThermoGraphCardEditor extends HTMLElement {
     this._render();
   }
 
+  _editorClimate() {
+    const sel = this.shadowRoot?.querySelector('[data-field="climate_entity"]');
+    const picked = String(sel?.value || "").trim();
+    if (picked.startsWith("climate.")) return picked;
+    return cardClimateFilter(this._config);
+  }
+
   _zoneRecord() {
-    return findZone({ zones: this._zones }, cardClimateFilter(this._config));
+    return findZone({ zones: this._zones }, this._editorClimate());
   }
 
   async _loadIntegration() {
     if (!this._hass) return;
+    const editorConfig = { ...this._config, climate_entity: this._editorClimate() };
     try {
-      const d = await refreshEditorIntegration(this._hass, this._config, {
+      const d = await refreshEditorIntegration(this._hass, editorConfig, {
         zones: this._zones,
         profiles: this._profiles,
         weekly: this._weekly,
@@ -460,16 +468,38 @@ class HaThermoGraphCardEditor extends HTMLElement {
     el.classList.toggle("error", err);
   }
 
-  _paintWeekly() {
+  async _paintWeekly() {
     const host = this.shadowRoot?.querySelector("#weekly-host");
-    if (!host) return;
-    const z = this._zoneRecord();
-    if (!z) {
+    if (!host || !this._hass) return;
+    const climate = this._editorClimate();
+    if (!climate?.startsWith("climate.")) {
       host.innerHTML = `<p class="hint">Seleziona un termostato.</p>`;
       return;
     }
+    let z = this._zoneRecord();
+    if (!z) {
+      host.innerHTML = `<p class="hint">Collegamento termostato…</p>`;
+      try {
+        const d = await refreshEditorIntegration(this._hass, { ...this._config, climate_entity: climate }, {
+          zones: this._zones,
+          profiles: this._profiles,
+          weekly: this._weekly,
+        });
+        this._zones = d?.zones || [];
+        this._profiles = d?.profiles || this._profiles;
+        this._weekly = d?.weekly_profiles || this._weekly;
+        z = findZone({ zones: this._zones }, climate);
+      } catch (e) {
+        host.innerHTML = `<p class="hint error">${esc(e?.message || "Termostato non disponibile")}</p>`;
+        return;
+      }
+    }
+    if (!z) {
+      host.innerHTML = `<p class="hint">Seleziona un termostato collegato a HA Thermo.</p>`;
+      return;
+    }
     const schedule = this._weekly[z.id] || {};
-    const ce = z.climate_entity || cardClimateFilter(this._config);
+    const ce = z.climate_entity || climate;
     host.innerHTML = WEEK_DAYS.map((day) => {
       const value = schedule[day] || "";
       return `<label class="weekly-day"><span>${DAY_LABELS[day]}</span><select data-weekly data-day="${day}" data-climate="${esc(ce)}">${profileOptions(this._profiles, value)}</select></label>`;
@@ -539,7 +569,7 @@ class HaThermoGraphCardEditor extends HTMLElement {
     if (get("show_target")) get("show_target").checked = c.show_target !== false;
     if (get("show_room_sensors")) get("show_room_sensors").checked = c.show_room_sensors !== false;
     if (get("show_profile_overlay")) get("show_profile_overlay").checked = c.show_profile_overlay === true;
-    this._paintWeekly();
+    void this._paintWeekly();
   }
 
   _changed() {
@@ -569,7 +599,7 @@ class HaThermoGraphCardEditor extends HTMLElement {
     const config = migrateCardConfig(draft, { zones: this._zones });
     delete config.zone;
     this._config = config;
-    if (cardClimateFilter(config) !== prevClimate) this._render();
+    if (cardClimateFilter(config) !== prevClimate) void this._loadIntegration();
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
   }
 
