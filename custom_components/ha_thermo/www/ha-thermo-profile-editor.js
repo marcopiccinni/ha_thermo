@@ -4,7 +4,7 @@ import {
   esc,
   slugProfileId,
   profileOptions,
-} from "./ha-thermo-common.js?v=0.4.7"; // profile editor bundle
+} from "./ha-thermo-common.js?v=0.4.8"; // profile editor bundle
 
 const BUILTIN = new Set(["comfort", "eco", "night", "away", "summer"]);
 const MIN_T = 5;

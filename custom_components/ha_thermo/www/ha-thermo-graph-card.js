@@ -11,6 +11,8 @@ import {
   getClimateEntityOptions,
   ensureThermostatLinked,
   profileOptions,
+  refreshEditorIntegration,
+  saveWeeklyDayProfile,
   graphHoursToShow,
   parseRoomSensorList,
   profileSchedulePoints,
@@ -28,8 +30,7 @@ import {
   measureHistoryChartHost,
   clampChartHeight,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.4.7";
-import "./ha-thermo-profile-editor.js?v=0.4.7";
+} from "./ha-thermo-common.js?v=0.4.8";
 
 const DEFAULT_CONFIG = () => ({
   title: "Grafico",
@@ -438,7 +439,11 @@ class HaThermoGraphCardEditor extends HTMLElement {
   async _loadIntegration() {
     if (!this._hass) return;
     try {
-      const d = await callWS(this._hass, { type: `${DOMAIN}/get_config` });
+      const d = await refreshEditorIntegration(this._hass, this._config, {
+        zones: this._zones,
+        profiles: this._profiles,
+        weekly: this._weekly,
+      });
       this._zones = d?.zones || [];
       this._profiles = d?.profiles || [];
       this._weekly = d?.weekly_profiles || {};
@@ -448,21 +453,11 @@ class HaThermoGraphCardEditor extends HTMLElement {
     this._render();
   }
 
-  async _saveWeekDay(climateEntity, day, profileId) {
-    const schedule = { ...(this._weeklyForClimate(climateEntity) || {}) };
-    schedule[day] = profileId;
-    await callWS(this._hass, {
-      type: `${DOMAIN}/zone/weekly/set`,
-      climate_entity: climateEntity,
-      schedule,
-    });
-    const z = findZone({ zones: this._zones }, climateEntity);
-    if (z?.id) this._weekly[z.id] = schedule;
-  }
-
-  _weeklyForClimate(climateEntity) {
-    const z = findZone({ zones: this._zones }, climateEntity);
-    return z?.id ? this._weekly[z.id] : null;
+  _weeklyStatus(text, err = false) {
+    const el = this.shadowRoot?.querySelector("#weekly-status");
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("error", err);
   }
 
   _paintWeekly() {
@@ -498,12 +493,11 @@ class HaThermoGraphCardEditor extends HTMLElement {
       .weekly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px}
       .weekly-day{font-size:0.85rem}
       .hint{font-size:0.75rem;color:var(--secondary-text-color)}
+      .hint.error{color:var(--error-color,#c62828)}
     </style><div class="form">
       <label>Titolo<input type="text" data-field="title" value=""></label>
       <label>Termostato<select data-field="climate_entity"></select></label>
-      <div class="section">Profili</div>
-      <ha-thermo-profile-editor></ha-thermo-profile-editor>
-      <span class="hint">Storico sul termostato fisico (entità <code>climate</code> selezionata).</span>
+      <span class="hint">Storico sul termostato fisico (entità <code>climate</code> selezionata). Curve profili: Impostazioni → HA Thermo → Profili.</span>
       <label>Sensori temperatura extra<textarea data-field="room_sensors" rows="2" placeholder="sensor.sala">${esc(roomVal)}</textarea></label>
       <div class="section">Serie visibili</div>
       <label class="row"><input type="checkbox" data-field="show_current" ${c.show_current !== false ? "checked" : ""}> temperatura attuale</label>
@@ -517,13 +511,10 @@ class HaThermoGraphCardEditor extends HTMLElement {
       <label>Colore destinataria<input data-field="color_target" value="${esc(c.color_target || HISTORY_SERIES_COLORS.target)}"></label>
       <label>Colore profilo<input data-field="color_profile" value="${esc(c.color_profile || HISTORY_SERIES_COLORS.profile)}"></label>
       <div class="section">Settimana (integrazione)</div>
+      <p class="hint">Salvataggio immediato nell'integrazione a ogni modifica.</p>
+      <p class="hint" id="weekly-status"></p>
       <div class="weekly-grid" id="weekly-host"></div>
     </div>`;
-    this._profileEl = this.shadowRoot.querySelector("ha-thermo-profile-editor");
-    this._profileEl?.addEventListener("ha-thermo-profiles-updated", (e) => {
-      this._profiles = e.detail?.profiles || this._profiles;
-      this._paintWeekly();
-    });
     this.shadowRoot.querySelectorAll("[data-field]").forEach((el) => el.addEventListener("change", () => this._changed()));
     this._shellReady = true;
     }
@@ -548,7 +539,6 @@ class HaThermoGraphCardEditor extends HTMLElement {
     if (get("show_target")) get("show_target").checked = c.show_target !== false;
     if (get("show_room_sensors")) get("show_room_sensors").checked = c.show_room_sensors !== false;
     if (get("show_profile_overlay")) get("show_profile_overlay").checked = c.show_profile_overlay === true;
-    if (this._hass && this._profileEl) this._profileEl.hass = this._hass;
     this._paintWeekly();
   }
 
@@ -585,10 +575,20 @@ class HaThermoGraphCardEditor extends HTMLElement {
 
   async _onWeeklyChange(el) {
     if (!this._hass) return;
+    this._weeklyStatus("Salvataggio…");
     try {
-      await this._saveWeekDay(el.dataset.climate, el.dataset.day, el.value);
+      const d = await saveWeeklyDayProfile(this._hass, this._config, {
+        zones: this._zones,
+        profiles: this._profiles,
+        weekly: this._weekly,
+      }, el.dataset.climate, el.dataset.day, el.value);
+      this._zones = d?.zones || this._zones;
+      this._profiles = d?.profiles || this._profiles;
+      this._weekly = d?.weekly_profiles || this._weekly;
+      this._weeklyStatus("✓ Pianificazione salvata (integrazione)");
+      this._changed();
     } catch (e) {
-      /* ignore */
+      this._weeklyStatus(e?.message || String(e), true);
     }
   }
 }

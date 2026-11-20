@@ -11,6 +11,10 @@ import {
   getClimateEntityOptions,
   ensureThermostatLinked,
   profileOptions,
+  profilePickerOptions,
+  cardActiveProfileValue,
+  refreshEditorIntegration,
+  saveWeeklyDayProfile,
   fetchRecorderHistory,
   buildClimateHistorySeries,
   resolvePhysicalClimateEntity,
@@ -25,8 +29,7 @@ import {
   clampChartHeight,
   measureHistoryChartHost,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.4.7";
-import "./ha-thermo-profile-editor.js?v=0.4.7";
+} from "./ha-thermo-common.js?v=0.4.8";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -106,6 +109,7 @@ class HaThermoCard extends HTMLElement {
         show_graph_target: true,
         show_slider: true,
         show_status: true,
+        show_profile_picker: true,
         chart_height: 180,
         ...config,
       },
@@ -404,6 +408,8 @@ class HaThermoCard extends HTMLElement {
     const today = todayKey();
     const todayProfile = zone && (this._data?.weekly_profiles?.[zone.id]?.[today] || zone.active_profile);
     const todayName = profiles.find((p) => p.id === todayProfile)?.name || zone?.active_profile_name;
+    const profileVal = cardActiveProfileValue(zone);
+    const showPicker = cfg.show_profile_picker !== false && zone;
 
     const climateId = zone ? this._climatePlotId(zone) : null;
     const climateOff = climateId ? this._climateIsOff(climateId) : true;
@@ -419,6 +425,11 @@ class HaThermoCard extends HTMLElement {
       ${cfg.show_graph !== false ? `<div class="mini-chart" id="mini-chart-host" style="height:${clampChartHeight(cfg.chart_height ?? 180, 180)}px"><div class="empty chart-loading">Caricamento grafico…</div></div>` : ""}
       <div class="controls">
         ${this._tempBlock(zone, cfg, disabled, manual)}
+        ${
+          showPicker
+            ? `<div class="profile-row"><label class="profile-label">Profilo<select data-action="profile">${profilePickerOptions(profiles, profileVal)}</select></label></div>`
+            : ""
+        }
         <div class="mode-row">
           <button type="button" class="toggle ${manual ? "" : "active"}" data-action="mode-auto">Automatico</button>
           <button type="button" class="toggle ${manual ? "active" : ""}" data-action="mode-manual">Manuale</button>
@@ -434,6 +445,9 @@ class HaThermoCard extends HTMLElement {
       .title{font-weight:600}
       .sub{font-size:0.8rem;color:var(--secondary-text-color)}
       .controls{display:grid;gap:10px;margin-top:10px}
+      .profile-row{display:grid;gap:4px}
+      .profile-label{display:grid;gap:4px;font-size:0.85rem}
+      .profile-label select{padding:6px 8px;border-radius:6px;border:1px solid var(--divider-color);font:inherit;background:var(--card-background-color,#fff)}
       .mode-row{display:flex;gap:8px}
       .toggle{flex:1;padding:8px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer;background:var(--card-background-color,#fff);font-size:0.85rem}
       .toggle.active{background:var(--primary-color);color:#fff;border-color:var(--primary-color)}
@@ -533,6 +547,19 @@ class HaThermoCard extends HTMLElement {
 
   _onChange(e) {
     const t = e.target;
+    if (t.matches("select[data-action='profile']")) {
+      const profile = t.value;
+      const label = profile === "__auto__" ? "Automatico" : "Profilo impostato";
+      this._call(
+        {
+          type: `${DOMAIN}/set_profile`,
+          profile,
+          thermostats: [this._thermostatTarget()],
+        },
+        label,
+      );
+      return;
+    }
     if (t.matches("input[type=range][data-action='slider']")) {
       const zone = this._zone();
       if (!zone) return;
@@ -592,7 +619,11 @@ class HaThermoCardEditor extends HTMLElement {
   async _loadIntegration() {
     if (!this._hass) return;
     try {
-      const d = await callWS(this._hass, { type: `${DOMAIN}/get_config` });
+      const d = await refreshEditorIntegration(this._hass, this._config, {
+        zones: this._zones,
+        profiles: this._profiles,
+        weekly: this._weekly,
+      });
       this._zones = d?.zones || [];
       this._profiles = d?.profiles || [];
       this._weekly = d?.weekly_profiles || {};
@@ -602,21 +633,11 @@ class HaThermoCardEditor extends HTMLElement {
     this._render();
   }
 
-  async _saveWeekDay(climateEntity, day, profileId) {
-    const schedule = { ...(this._weeklyForClimate(climateEntity) || {}) };
-    schedule[day] = profileId;
-    await callWS(this._hass, {
-      type: `${DOMAIN}/zone/weekly/set`,
-      climate_entity: climateEntity,
-      schedule,
-    });
-    const z = findZone({ zones: this._zones }, climateEntity);
-    if (z?.id) this._weekly[z.id] = schedule;
-  }
-
-  _weeklyForClimate(climateEntity) {
-    const z = findZone({ zones: this._zones }, climateEntity);
-    return z?.id ? this._weekly[z.id] : null;
+  _weeklyStatus(text, err = false) {
+    const el = this.shadowRoot?.querySelector("#weekly-status");
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("error", err);
   }
 
   _renderShell() {
@@ -629,11 +650,10 @@ class HaThermoCardEditor extends HTMLElement {
       .weekly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px}
       .weekly-day{font-size:0.85rem}
       .hint{color:var(--secondary-text-color);font-size:0.8rem}
+      .hint.error{color:var(--error-color,#c62828)}
     </style><div class="form">
       <label>Titolo<input data-f="title" value="${esc(this._config.title || "")}"></label>
       <label>Termostato<select data-f="climate_entity"></select></label>
-      <div class="section">Profili (curve 24h condivise)</div>
-      <ha-thermo-profile-editor></ha-thermo-profile-editor>
       <div class="section">Grafico</div>
       <label class="row"><input type="checkbox" data-f="show_graph" checked> Mostra grafico</label>
       <label class="row"><input type="checkbox" data-f="show_graph_current" checked> Serie: temperatura attuale</label>
@@ -641,15 +661,13 @@ class HaThermoCardEditor extends HTMLElement {
       <div class="section">Termostato</div>
       <label class="row"><input type="checkbox" data-f="show_slider" checked> Slider in Manuale</label>
       <label class="row"><input type="checkbox" data-f="show_status" checked> Mostra profilo attivo</label>
-      <div class="section">Settimana (salvata su integrazione)</div>
+      <label class="row"><input type="checkbox" data-f="show_profile_picker" checked> Menu profilo sulla card</label>
+      <div class="section">Settimana (integrazione)</div>
+      <p class="hint">Ogni giorno viene salvato nell'integrazione al cambio. Gestione curve: Impostazioni → HA Thermo → Profili.</p>
+      <p class="hint" id="weekly-status"></p>
       <div class="weekly-grid" id="weekly-host"></div>
     </div>`;
     this._weeklyHost = this.shadowRoot.querySelector("#weekly-host");
-    this._profileEl = this.shadowRoot.querySelector("ha-thermo-profile-editor");
-    this._profileEl?.addEventListener("ha-thermo-profiles-updated", (e) => {
-      this._profiles = e.detail?.profiles || this._profiles;
-      this._paintWeekly();
-    });
     this.shadowRoot.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => this._emitConfig()));
     this._shellReady = true;
   }
@@ -670,7 +688,7 @@ class HaThermoCardEditor extends HTMLElement {
     if (g("show_graph_target")) g("show_graph_target").checked = c.show_graph_target !== false;
     if (g("show_slider")) g("show_slider").checked = c.show_slider !== false;
     if (g("show_status")) g("show_status").checked = c.show_status !== false;
-    if (this._hass && this._profileEl) this._profileEl.hass = this._hass;
+    if (g("show_profile_picker")) g("show_profile_picker").checked = c.show_profile_picker !== false;
   }
 
   _paintWeekly() {
@@ -710,6 +728,7 @@ class HaThermoCardEditor extends HTMLElement {
       show_graph_target: g("show_graph_target")?.checked,
       show_slider: g("show_slider")?.checked,
         show_status: g("show_status")?.checked,
+        show_profile_picker: g("show_profile_picker")?.checked,
       },
       { zones: this._zones },
     );
@@ -721,10 +740,20 @@ class HaThermoCardEditor extends HTMLElement {
 
   async _onWeeklyChange(el) {
     if (!this._hass) return;
+    this._weeklyStatus("Salvataggio…");
     try {
-      await this._saveWeekDay(el.dataset.climate, el.dataset.day, el.value);
+      const d = await saveWeeklyDayProfile(this._hass, this._config, {
+        zones: this._zones,
+        profiles: this._profiles,
+        weekly: this._weekly,
+      }, el.dataset.climate, el.dataset.day, el.value);
+      this._zones = d?.zones || this._zones;
+      this._profiles = d?.profiles || this._profiles;
+      this._weekly = d?.weekly_profiles || this._weekly;
+      this._weeklyStatus("✓ Pianificazione salvata (integrazione)");
+      this._emitConfig();
     } catch (e) {
-      /* ignore */
+      this._weeklyStatus(e?.message || String(e), true);
     }
   }
 }

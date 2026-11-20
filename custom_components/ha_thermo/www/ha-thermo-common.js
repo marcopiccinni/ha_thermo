@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.4.7";
+export const INTEGRATION_VERSION = "0.4.8";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -122,6 +122,52 @@ export const profileOptions = (profiles, selected) =>
   (profiles || [])
     .map((p) => `<option value="${esc(p.id)}" ${selected === p.id ? "selected" : ""}>${esc(p.name)}</option>`)
     .join("");
+
+/** Profile picker for card UI: Auto (follow weekly) + profiles. */
+export const profilePickerOptions = (profiles, selected) => {
+  const sel = String(selected ?? "__auto__");
+  let html = `<option value="__auto__" ${sel === "__auto__" ? "selected" : ""}>Automatico</option>`;
+  html += profileOptions(profiles, sel === "__auto__" ? "" : sel);
+  return html;
+};
+
+export const cardActiveProfileValue = (zone) => {
+  if (!zone) return "__auto__";
+  return zone.pinned ? zone.active_profile || "__auto__" : "__auto__";
+};
+
+/** Ensure thermostat is linked and refresh integration snapshot for editors. */
+export const refreshEditorIntegration = async (hass, config, snapshot = {}) => {
+  const climate = String(cardClimateFilter(config) || "").trim();
+  if (!climate.startsWith("climate.") || !hass) {
+    return {
+      zones: snapshot.zones || [],
+      profiles: snapshot.profiles || [],
+      weekly_profiles: snapshot.weekly_profiles || snapshot.weekly || {},
+    };
+  }
+  const linked = await ensureThermostatLinked(hass, config, {
+    zones: snapshot.zones,
+    profiles: snapshot.profiles,
+    weekly_profiles: snapshot.weekly_profiles || snapshot.weekly,
+  });
+  return await callWS(hass, { type: `${DOMAIN}/get_config` }).catch(() => linked);
+};
+
+/** Persist one weekday profile (integration storage) and return refreshed config. */
+export const saveWeeklyDayProfile = async (hass, config, snapshot, climateEntity, day, profileId) => {
+  const data = await refreshEditorIntegration(hass, config, snapshot);
+  const zone = findZone(data, climateEntity);
+  if (!zone?.id) throw new Error("Termostato non collegato all'integrazione");
+  const schedule = { ...(data.weekly_profiles?.[zone.id] || {}) };
+  schedule[day] = profileId;
+  await callWS(hass, {
+    type: `${DOMAIN}/zone/weekly/set`,
+    climate_entity: climateEntity,
+    schedule,
+  });
+  return await callWS(hass, { type: `${DOMAIN}/get_config` });
+};
 
 export const callWS = async (hass, msg) => await hass.callWS(msg);
 

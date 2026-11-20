@@ -11,7 +11,7 @@
     "step": {
       "init": {
         "title": "Opzioni HA Thermo",
-        "description": "Profili, termostati e parametri. Puoi modificare le curve anche dall’editor card Lovelace.",
+        "description": "Profili, termostati e parametri. Le curve 24h si gestiscono qui; la card imposta solo il termostato e la pianificazione settimanale.",
         "menu_options": {
           "profiles": "Profili",
           "settings": "Impostazioni generali",

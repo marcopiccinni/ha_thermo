@@ -39,7 +39,7 @@ class ThermoEntity(CoordinatorEntity[ThermoCoordinator]):
             via_device=(DOMAIN, entry.entry_id),
             name=self.zone.name,
             manufacturer="marcopiccinni",
-            model="Zona termostato",
+            model="Termostato",
             sw_version=VERSION,
         )
 
