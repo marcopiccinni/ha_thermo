@@ -61,13 +61,11 @@ async def test_manual_mode_persists(manager: ThermoManager) -> None:
 
 
 @pytest.mark.asyncio
-async def test_auto_mode_clears_override_and_applies_profile(manager: ThermoManager) -> None:
+async def test_auto_mode_applies_profile(manager: ThermoManager) -> None:
     manager.weekly_profiles["z1"] = {day: "eco" for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
     await manager.async_set_control_mode(CONTROL_MODE_MANUAL, ["climate.sala"])
-    manager.manual_overrides["z1"] = {"temperature": 23.0, "until": None}
     await manager.async_set_control_mode(CONTROL_MODE_AUTO, ["climate.sala"])
     assert not manager.is_manual_mode("z1")
-    assert "z1" not in manager.manual_overrides
     manager._apply_zone.assert_awaited()
 
 

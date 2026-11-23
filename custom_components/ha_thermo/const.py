@@ -24,7 +24,6 @@ CONF_NIGHT_TEMP: Final = "night_temp"
 CONF_SUMMER_TEMP: Final = "summer_temp"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_REASSERT_INTERVAL: Final = "reassert_interval"
-CONF_MANUAL_HOLD: Final = "manual_hold"
 
 DEFAULT_COMFORT_TEMP: Final = 20.0
 DEFAULT_ECO_TEMP: Final = 19.0
@@ -33,7 +32,6 @@ DEFAULT_NIGHT_TEMP: Final = 18.0
 DEFAULT_SUMMER_TEMP: Final = 26.0
 DEFAULT_SCAN_INTERVAL: Final = 30
 DEFAULT_REASSERT_INTERVAL: Final = 120
-DEFAULT_MANUAL_HOLD: Final = 30
 
 # Entity attributes
 ENTITY_CURRENT_TEMPERATURE: Final = "current_temperature"

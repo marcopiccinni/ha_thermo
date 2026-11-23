@@ -18,7 +18,6 @@ from .const import (
     CONF_COMFORT_TEMP,
     CONF_DEFAULT_TEMP,
     CONF_ECO_TEMP,
-    CONF_MANUAL_HOLD,
     CONF_MAX_TEMP,
     CONF_MIN_TEMP,
     CONF_NAME,
@@ -33,18 +32,15 @@ from .const import (
     DEFAULT_AWAY_TEMP,
     DEFAULT_COMFORT_TEMP,
     DEFAULT_ECO_TEMP,
-    DEFAULT_MANUAL_HOLD,
     DEFAULT_NIGHT_TEMP,
     DEFAULT_PROFILE_IDS,
     DEFAULT_REASSERT_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SUMMER_TEMP,
     DOMAIN,
-    MAX_MANUAL_HOLD,
     MAX_REASSERT_INTERVAL,
     MAX_SCAN_INTERVAL,
     MAX_TEMP,
-    MIN_MANUAL_HOLD,
     MIN_REASSERT_INTERVAL,
     MIN_SCAN_INTERVAL,
     MIN_TEMP,
@@ -107,10 +103,6 @@ def _number(
 def _settings_schema(options: dict[str, Any]) -> vol.Schema:
     return vol.Schema(
         {
-            vol.Required(
-                CONF_MANUAL_HOLD,
-                default=options.get(CONF_MANUAL_HOLD, DEFAULT_MANUAL_HOLD),
-            ): _number(MIN_MANUAL_HOLD, MAX_MANUAL_HOLD, 5, "min"),
             vol.Required(
                 CONF_REASSERT_INTERVAL,
                 default=options.get(
@@ -176,7 +168,6 @@ class ThermoConfigFlow(ConfigFlow, domain=DOMAIN):
                     zones.append(zone.to_dict())
                 options = {
                     CONF_ZONES: zones,
-                    CONF_MANUAL_HOLD: DEFAULT_MANUAL_HOLD,
                     CONF_REASSERT_INTERVAL: DEFAULT_REASSERT_INTERVAL,
                     CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
                     CONF_COMFORT_TEMP: DEFAULT_COMFORT_TEMP,

@@ -1,10 +1,15 @@
 # Changelog
 
+## 0.4.13
+
+- Rimosso `manual_hold` e override temporaneo: in **Automatico**, un setpoint esterno passa subito a **Manuale** (valore conservato); si torna Automatico solo da utente/card.
+- Ignorati gli `state_changed` dovuti ai propri `set_temperature` (context `parent_id` + ultimo valore inviato).
+
 ## 0.4.12
 
 - **Modello semplificato**: **Automatico** = profilo del giorno/ora dalla pianificazione settimanale (editor Lovelace); **Manuale** = solo setpoint fisico (`set_temperature`), senza profilo; **Off** invariato (v0.4.11).
 - Rimossi pin profilo, menu profilo sulla card, entità `select` profilo e WebSocket `set_profile` (sostituito da `thermostat/mode`). Migrazione storage schema 3: pin legacy → modalità Manuale.
-- In Automatico, modifica setpoint esterna resta un override temporaneo (`manual_hold`, default 30 min). Card: grafico, temperature, slider solo in Manuale, Automatico/Manuale, On/Off.
+- Card: grafico, temperature, slider solo in Manuale, Automatico/Manuale, On/Off.
 - Servizio `ha_thermo.set_profile` accetta solo `__auto__` (torna Automatico); gli altri id profilo restituiscono errore.
 - Test: `tests/test_control_mode.py`.
 

@@ -10,9 +10,9 @@ import pytest
 pytest.importorskip("homeassistant")
 
 from homeassistant.const import STATE_OFF
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant, State
 
-from custom_components.ha_thermo.const import CONF_ZONES
+from custom_components.ha_thermo.const import CONF_ZONES, CONTROL_MODE_AUTO
 from custom_components.ha_thermo.manager import ThermoManager
 from custom_components.ha_thermo.models import Zone
 
@@ -72,7 +72,6 @@ async def test_set_temperature_writes_physical_climate(manager: ThermoManager) -
     await manager.async_set_temperature(["climate.sala"], 22.5)
     manager._set_temperature.assert_awaited()
     assert manager.is_manual_mode("z1")
-    assert "z1" not in manager.manual_overrides
 
 
 @pytest.mark.asyncio
@@ -87,16 +86,22 @@ async def test_apply_zone_skips_when_power_off(manager: ThermoManager) -> None:
 
 
 @pytest.mark.asyncio
-async def test_external_setpoint_override_in_auto(manager: ThermoManager, hass: HomeAssistant) -> None:
-    manager.settings["manual_hold"] = 30
-    manager.control_modes["z1"] = "auto"
+async def test_external_setpoint_switches_to_manual(
+    manager: ThermoManager, hass: HomeAssistant
+) -> None:
+    manager.control_modes["z1"] = CONTROL_MODE_AUTO
     old = hass.states.get("climate.sala")
+    new = State(
+        "climate.sala",
+        "heat",
+        {"temperature": 23.0, "current_temperature": 19.5, "hvac_mode": "heat"},
+        context=Context(parent_id="user-action"),
+    )
     hass.states.async_set(
         "climate.sala",
         "heat",
         {"temperature": 23.0, "current_temperature": 19.5, "hvac_mode": "heat"},
     )
-    new = hass.states.get("climate.sala")
     event = SimpleNamespace(
         data={
             "entity_id": "climate.sala",
@@ -105,7 +110,25 @@ async def test_external_setpoint_override_in_auto(manager: ThermoManager, hass: 
         }
     )
     manager._handle_state_change(event)
-    assert manager.manual_overrides["z1"]["temperature"] == 23.0
+    assert manager.is_manual_mode("z1")
+
+
+@pytest.mark.asyncio
+async def test_own_setpoint_echo_stays_auto(manager: ThermoManager, hass: HomeAssistant) -> None:
+    manager.control_modes["z1"] = CONTROL_MODE_AUTO
+    manager._last_sent_setpoint["z1"] = 21.0
+    old = hass.states.get("climate.sala")
+    new = State(
+        "climate.sala",
+        "heat",
+        {"temperature": 21.0, "current_temperature": 19.5, "hvac_mode": "heat"},
+        context=Context(parent_id=manager._service_context_id),
+    )
+    event = SimpleNamespace(
+        data={"entity_id": "climate.sala", "old_state": old, "new_state": new}
+    )
+    manager._handle_state_change(event)
+    assert manager.control_mode("z1") == CONTROL_MODE_AUTO
 
 
 def test_physical_is_off_reads_hvac_mode(manager: ThermoManager, hass: HomeAssistant) -> None:

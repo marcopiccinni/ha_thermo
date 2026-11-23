@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import Context, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -31,7 +31,6 @@ from .const import (
     ATTR_ZONES,
     CONF_ZONES,
     DAYS,
-    DEFAULT_MANUAL_HOLD,
     DEFAULT_PROFILE_IDS,
     DEFAULT_REASSERT_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
@@ -75,7 +74,6 @@ class ThermoManager:
         self.active_profiles: dict[str, str] = {}
         self.weekly_profiles: dict[str, dict[str, str]] = {}
         self.control_modes: dict[str, str] = {}
-        self.manual_overrides: dict[str, dict[str, Any]] = {}
         self.disabled_zones: set[str] = set()
         self.effective_targets: dict[str, float | None] = {}
         self._desired: dict[str, float] = {}
@@ -88,6 +86,8 @@ class ThermoManager:
         self.coordinator: ThermoCoordinator | None = None
         self._paused_hvac: dict[str, str] = {}
         self._unsub_trackers: list[Any] = []
+        self._last_sent_setpoint: dict[str, float] = {}
+        self._service_context_id = f"{DOMAIN}.{entry.entry_id}"
 
     async def async_setup(self) -> None:
         """Initialize the manager."""
@@ -108,7 +108,6 @@ class ThermoManager:
         self.enabled = bool(raw.get("enabled", True))
         self.disabled_zones = {str(z) for z in raw.get("disabled_zones") or []}
         self.settings = {
-            "manual_hold": raw.get("manual_hold", DEFAULT_MANUAL_HOLD),
             "reassert_interval": raw.get("reassert_interval", DEFAULT_REASSERT_INTERVAL),
             "scan_interval": raw.get("scan_interval", DEFAULT_SCAN_INTERVAL),
         }
@@ -158,20 +157,6 @@ class ThermoManager:
             for zone_id, mode in (raw.get("paused_hvac_modes") or {}).items()
             if mode
         }
-        self.manual_overrides = {}
-        now = dt_util.now()
-        for zone_id, override in (raw.get("manual_overrides") or {}).items():
-            if not isinstance(override, dict):
-                continue
-            until = _parse_datetime(override.get("until"))
-            temperature = override.get("temperature")
-            if until is None or temperature is None or until <= now:
-                continue
-            self.manual_overrides[str(zone_id)] = {
-                "temperature": float(temperature),
-                "until": until,
-            }
-
         bypasses: dict[str, Bypass] = {}
         for item in raw.get("bypasses") or []:
             if not isinstance(item, dict):
@@ -228,7 +213,6 @@ class ThermoManager:
                 self.active_profiles.pop(zone_id, None)
                 self.weekly_profiles.pop(zone_id, None)
                 self.control_modes.pop(zone_id, None)
-                self.manual_overrides.pop(zone_id, None)
                 self.disabled_zones.discard(zone_id)
                 self._paused_hvac.pop(zone_id, None)
         for zone_id, zone in current.items():
@@ -246,7 +230,6 @@ class ThermoManager:
             "schema_version": 3,
             "enabled": self.enabled,
             "disabled_zones": sorted(self.disabled_zones),
-            "manual_hold": self.settings["manual_hold"],
             "reassert_interval": self.settings["reassert_interval"],
             "scan_interval": self.settings["scan_interval"],
             "profiles": [p.to_dict() for p in self.profiles.values()],
@@ -257,7 +240,6 @@ class ThermoManager:
             },
             "active_profiles": dict(self.active_profiles),
             "control_modes": dict(self.control_modes),
-            "manual_overrides": self._serialize_overrides(),
             "paused_hvac_modes": dict(self._paused_hvac),
         }
 
@@ -270,16 +252,6 @@ class ThermoManager:
         """Write storage immediately (profile pin and user-driven state)."""
         await self._store.async_save(self._storage_payload())
 
-    def _serialize_overrides(self) -> dict[str, dict[str, Any]]:
-        result: dict[str, dict[str, Any]] = {}
-        for zone_id, override in self.manual_overrides.items():
-            until = override.get("until")
-            result[zone_id] = {
-                "temperature": override.get("temperature"),
-                "until": until.isoformat() if isinstance(until, datetime) else None,
-            }
-        return result
-
     def _expire(self, now: datetime) -> bool:
         """Expire timed items."""
         changed = False
@@ -291,11 +263,6 @@ class ThermoManager:
                     EVENT_BYPASS_ENDED,
                     {ATTR_BYPASS: bypass.to_dict(), ATTR_ZONES: bypass.zones},
                 )
-        for zone_id, override in list(self.manual_overrides.items()):
-            until = override.get("until")
-            if not isinstance(until, datetime) or until <= now:
-                self.manual_overrides.pop(zone_id, None)
-                changed = True
         return changed
 
     def _resolve_profile(self, zone_id: str, now: datetime) -> str | None:
@@ -376,13 +343,6 @@ class ThermoManager:
         if bypass is not None:
             base = self._base_target(zone, now)
             return bypass.resolve(base), "bypass"
-        override = self.manual_overrides.get(zone.id)
-        if override:
-            until = override.get("until")
-            if not isinstance(until, datetime) or until > now:
-                temperature = override.get("temperature")
-                if temperature is not None:
-                    return float(temperature), "override"
         target = self._base_target(zone, now)
         return target, "profile"
 
@@ -456,12 +416,14 @@ class ThermoManager:
         self._desired[zone.id] = target
         self._last_apply[zone.id] = now
         self._ignore_until[zone.id] = now + timedelta(seconds=10)
+        self._last_sent_setpoint[zone.id] = target
         try:
             await self.hass.services.async_call(
                 "climate",
                 "set_temperature",
                 {"entity_id": zone.climate_entity, "temperature": target},
                 blocking=False,
+                context=Context(parent_id=self._service_context_id),
             )
         except Exception:
             _LOGGER.exception("Could not set temperature on %s", zone.climate_entity)
@@ -512,10 +474,6 @@ class ThermoManager:
             self._notify()
             return
         now = dt_util.now()
-        ignore_until = self._ignore_until.get(zone.id)
-        if ignore_until is not None and now < ignore_until:
-            self._notify()
-            return
         if not self.enabled or zone.id in self.disabled_zones:
             self._notify()
             return
@@ -536,21 +494,41 @@ class ThermoManager:
         if old_temp is not None and abs(new_temp - old_temp) < 0.5:
             self._notify()
             return
+        if self._is_own_setpoint_echo(zone.id, new_temp, new_state):
+            self._notify()
+            return
         if self.is_manual_mode(zone.id):
             self._notify()
             return
-        hold_minutes = self.settings["manual_hold"]
-        if hold_minutes <= 0:
-            self._notify()
-            return
-        until = now + timedelta(minutes=hold_minutes)
-        self.manual_overrides[zone.id] = {"temperature": new_temp, "until": until}
+        self.control_modes[zone.id] = CONTROL_MODE_MANUAL
+        self._last_sent_setpoint.pop(zone.id, None)
         self._fire(
             EVENT_MANUAL_OVERRIDE,
-            {ATTR_ZONE_ID: zone.id, ATTR_TARGET: new_temp, "until": until.isoformat() if until else None},
+            {
+                ATTR_ZONE_ID: zone.id,
+                ATTR_TARGET: new_temp,
+                "reason": "external_setpoint",
+            },
         )
         self._save()
         self._notify()
+
+    def _is_own_setpoint_echo(
+        self, zone_id: str, new_temp: float, new_state: Any
+    ) -> bool:
+        """Ignore state updates caused by HA Thermo set_temperature."""
+        context = getattr(new_state, "context", None)
+        if context is not None and context.parent_id == self._service_context_id:
+            self._last_sent_setpoint.pop(zone_id, None)
+            return True
+        ignore_until = self._ignore_until.get(zone_id)
+        if ignore_until is not None and dt_util.now() < ignore_until:
+            return True
+        sent = self._last_sent_setpoint.get(zone_id)
+        if sent is not None and abs(new_temp - sent) < 0.5:
+            self._last_sent_setpoint.pop(zone_id, None)
+            return True
+        return False
 
     def _sync_power_from_physical(self, zone: Zone, old_state: Any, new_state: Any) -> None:
         """When the physical device is powered off, pause HA Thermo scheduling."""
@@ -765,7 +743,6 @@ class ThermoManager:
         for zone_id in zone_ids:
             self.control_modes[zone_id] = mode_key
             if mode_key == CONTROL_MODE_AUTO:
-                self.manual_overrides.pop(zone_id, None)
                 resolved = self._resolve_profile(zone_id, now)
                 if resolved:
                     self.active_profiles[zone_id] = resolved
@@ -831,8 +808,6 @@ class ThermoManager:
             created.append(bypass)
         for bypass in created:
             self.bypasses[bypass.id] = bypass
-        for zone_id in zone_ids:
-            self.manual_overrides.pop(zone_id, None)
         for bypass in created:
             self._fire(
                 EVENT_BYPASS_STARTED,
@@ -877,7 +852,6 @@ class ThermoManager:
             self.control_modes[zone_id] = CONTROL_MODE_MANUAL
             clamped = zone.clamp(temp)
             await self._set_temperature(zone, clamped, now)
-            self.manual_overrides.pop(zone_id, None)
         await self.async_persist_now()
         self._notify()
 
@@ -1118,8 +1092,6 @@ class ThermoManager:
             return "manual"
         if self.bypass_for_zone(zone_id) is not None:
             return "bypass"
-        if self.is_override_active(zone_id):
-            return "override"
         return "automatic"
 
     def weekly_profile_today(self, zone_id: str) -> str | None:
@@ -1138,12 +1110,8 @@ class ThermoManager:
         return remaining_seconds(bypass, dt_util.now())
 
     def is_override_active(self, zone_id: str) -> bool:
-        """Check if manual override is active."""
-        override = self.manual_overrides.get(zone_id)
-        if not override:
-            return False
-        until = override.get("until")
-        return isinstance(until, datetime) and until > dt_util.now()
+        """Legacy override flag (removed; always false)."""
+        return False
 
     def is_zone_enabled(self, zone_id: str) -> bool:
         """Check if zone is enabled."""
@@ -1164,7 +1132,6 @@ class ThermoManager:
             "enabled": self.enabled,
             "disabled_zones": sorted(self.disabled_zones),
             "settings": {
-                "manual_hold": self.settings["manual_hold"],
                 "reassert_interval": self.settings["reassert_interval"],
                 "scan_interval": self.settings["scan_interval"],
             },
@@ -1182,13 +1149,6 @@ class ThermoManager:
             },
             "active_profiles": dict(self.active_profiles),
             "control_modes": dict(self.control_modes),
-            "manual_overrides": {
-                zone_id: {
-                    "temperature": override.get("temperature"),
-                    "until": _iso(override.get("until")),
-                }
-                for zone_id, override in self.manual_overrides.items()
-            },
             "hub": {
                 "entity_ids": {
                     key: self._entity_id(domain, "hub", key)
