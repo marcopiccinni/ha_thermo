@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -54,6 +54,9 @@ from .profile_migration import migrate_profiles_list
 
 _LOGGER = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from .coordinator import ThermoCoordinator
+
 
 class ThermoManager:
     """Main manager for HA Thermo integration."""
@@ -79,6 +82,7 @@ class ThermoManager:
         self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
         self._entry_id = entry.entry_id
         self._last_profile_merge: dict[str, str] = {}
+        self.coordinator: ThermoCoordinator | None = None
 
     async def async_setup(self) -> None:
         """Initialize the manager."""
@@ -226,9 +230,9 @@ class ThermoManager:
                 self._ensure_weekly_schedule(zone_id)
         self.zones = current
 
-    def _save(self) -> None:
-        """Persist state to storage."""
-        data = {
+    def _storage_payload(self) -> dict[str, Any]:
+        """Build the integration storage document."""
+        return {
             "schema_version": 3,
             "enabled": self.enabled,
             "disabled_zones": sorted(self.disabled_zones),
@@ -245,7 +249,15 @@ class ThermoManager:
             "pinned_profiles": self._serialize_pins(),
             "manual_overrides": self._serialize_overrides(),
         }
-        self._store.async_delay_save(lambda: data, 2.0)
+
+    def _save(self) -> None:
+        """Persist state to storage (debounced)."""
+        payload = self._storage_payload()
+        self._store.async_delay_save(lambda: payload, 2.0)
+
+    async def async_persist_now(self) -> None:
+        """Write storage immediately (profile pin and user-driven state)."""
+        await self._store.async_save(self._storage_payload())
 
     def _serialize_pins(self) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
@@ -502,7 +514,10 @@ class ThermoManager:
         self.hass.bus.async_fire(event_type, data)
 
     def _notify(self) -> None:
-        """Notify listeners (storage saved; cards refresh via WS/events)."""
+        """Refresh entities and subscribers after state-changing actions."""
+        self._fire_profiles_changed()
+        if self.coordinator is not None:
+            self.coordinator.async_request_refresh()
 
     def _fire_profiles_changed(self) -> None:
         self._fire(EVENT_PROFILES_CHANGED, {})
@@ -662,8 +677,15 @@ class ThermoManager:
         if profile_id == PROFILE_AUTO:
             for zone_id in zone_ids:
                 self.pinned_profiles.pop(zone_id, None)
-            self._save()
+                now = dt_util.now()
+                resolved = self._resolve_profile(zone_id, now)
+                if resolved:
+                    self.active_profiles[zone_id] = resolved
+            await self.async_persist_now()
             self._notify()
+            now = dt_util.now()
+            for zone_id in zone_ids:
+                await self._apply_zone(self.zones[zone_id], now)
             return
         if profile_id not in self.profiles:
             raise ValueError("unknown_profile")
@@ -685,8 +707,11 @@ class ThermoManager:
                     ATTR_SOURCE: "manual",
                 },
             )
-        self._save()
+        await self.async_persist_now()
         self._notify()
+        now = dt_util.now()
+        for zone_id in zone_ids:
+            await self._apply_zone(self.zones[zone_id], now)
 
     async def async_start_bypass(
         self,

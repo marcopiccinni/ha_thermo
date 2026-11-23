@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.10
+
+- **Fix selezione profilo**: `async_set_profile` salva subito lo storage (`async_persist_now`), aggiorna il coordinator e l’entità `select`; `_notify` non era un no-op. Il pin manuale resta dopo refresh/riavvio.
+- **Card**: rimosso l’editor a barre 24h duplicato (`ha-thermo-profile-editor`); un solo menu **Profilo** che applica al cambio (niente Salva). Bundle `?v=0.4.10`.
+- **Test**: regressione pin/storage/tick in `tests/test_set_profile.py`.
+
 ## 0.4.9
 
 - **Card**: editor **curva 24h** sulla vista card (`show_profile_chart`); `manage-profiles=false` (niente crea/elimina, solo modifica orari e salva).
