@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.11
+
+- **On/Off**: comando sul `climate` fisico (`set_hvac_mode: off` / ripristino modalità salvata) e sospensione controllo automatico (`disabled_zones` + `paused_hvac_modes` in storage). Il tick non riscrive più modalità/temperatura quando il termostato è spento. WebSocket `thermostat/power`.
+- **Temperature card**: attuale (sensore stanza o `current_temperature` del climate) e impostata (`temperature` del climate) sempre visibili; slider in Manuale invia `set_temperature` al fisico. Listener `state_changed` su climate e sensore stanza.
+- **Sync esterna**: modifiche al setpoint dal fisico o da HA creano override temporaneo per `manual_hold` minuti in Automatico; in Manuale (profilo pin) l’override resta finché non si cambia di nuovo.
+- **Entità `climate.*` dell’integrazione**: specchio del termostato collegato (`climate_entity` in attributi).
+- Rimosso il bundle `ha-thermo-profile-editor.js`.
+
 ## 0.4.10
 
 - **Fix selezione profilo**: `async_set_profile` salva subito lo storage (`async_persist_now`), aggiorna il coordinator e l’entità `select`; `_notify` non era un no-op. Il pin manuale resta dopo refresh/riavvio.

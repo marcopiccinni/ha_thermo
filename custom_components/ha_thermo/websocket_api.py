@@ -249,6 +249,31 @@ async def ws_thermostat_ensure(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): f"{DOMAIN}/thermostat/power",
+        vol.Required("enabled"): bool,
+        **_THERMOSTATS_WS,
+    }
+)
+@websocket_api.async_response
+async def ws_thermostat_power(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    manager = _manager(hass, connection, msg)
+    if manager is None:
+        return
+    await _execute(
+        connection,
+        msg,
+        lambda: manager.async_set_power(
+            msg["enabled"], thermostats_from_payload(msg)
+        ),
+    )
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): f"{DOMAIN}/set_enabled",
         vol.Required("enabled"): bool,
         **_THERMOSTATS_WS,
@@ -476,6 +501,7 @@ COMMANDS = (
     ws_set_zone_weekly,
     ws_thermostat_ensure,
     ws_set_enabled,
+    ws_thermostat_power,
     ws_create_profile,
     ws_update_profile,
     ws_delete_profile,

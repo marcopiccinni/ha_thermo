@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
@@ -83,6 +84,8 @@ class ThermoManager:
         self._entry_id = entry.entry_id
         self._last_profile_merge: dict[str, str] = {}
         self.coordinator: ThermoCoordinator | None = None
+        self._paused_hvac: dict[str, str] = {}
+        self._unsub_trackers: list[Any] = []
 
     async def async_setup(self) -> None:
         """Initialize the manager."""
@@ -97,6 +100,7 @@ class ThermoManager:
             self.pinned_profiles,
         )
         self._save()
+        self._refresh_state_listeners()
 
     def _restore(self, raw: dict[str, Any]) -> None:
         """Restore state from storage."""
@@ -152,6 +156,11 @@ class ThermoManager:
                 "profile_id": str(profile_id),
                 "until": _parse_datetime(pin.get("until")),
             }
+        self._paused_hvac = {
+            str(zone_id): str(mode)
+            for zone_id, mode in (raw.get("paused_hvac_modes") or {}).items()
+            if mode
+        }
         self.manual_overrides = {}
         now = dt_util.now()
         for zone_id, override in (raw.get("manual_overrides") or {}).items():
@@ -224,6 +233,7 @@ class ThermoManager:
                 self.pinned_profiles.pop(zone_id, None)
                 self.manual_overrides.pop(zone_id, None)
                 self.disabled_zones.discard(zone_id)
+                self._paused_hvac.pop(zone_id, None)
         for zone_id, zone in current.items():
             if zone_id not in self.zones:
                 self.zones[zone_id] = zone
@@ -248,6 +258,7 @@ class ThermoManager:
             "active_profiles": dict(self.active_profiles),
             "pinned_profiles": self._serialize_pins(),
             "manual_overrides": self._serialize_overrides(),
+            "paused_hvac_modes": dict(self._paused_hvac),
         }
 
     def _save(self) -> None:
@@ -341,6 +352,8 @@ class ThermoManager:
 
     async def _apply_zone(self, zone: Zone, now: datetime) -> None:
         """Apply target to a single zone."""
+        if zone.id in self.disabled_zones or self._physical_is_off(zone):
+            return
         target, source = self._effective_target(zone, now)
         if target is not None:
             target = zone.clamp(target)
@@ -408,15 +421,51 @@ class ThermoManager:
     def _climate_target(self, zone: Zone) -> float | None:
         """Read current target from climate entity."""
         state = self.hass.states.get(zone.climate_entity)
-        if state is None or state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN, "off"}:
+        if state is None or state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
             return None
-        value = state.attributes.get("temperature")
-        if value is None:
+        if self._physical_is_off(zone):
             return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
+        for key in ("temperature", "target_temp_high", "target_temp_low"):
+            value = state.attributes.get(key)
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    def physical_setpoint(self, zone_id: str) -> float | None:
+        """Setpoint read from the physical climate entity."""
+        zone = self.zones.get(zone_id)
+        return self._climate_target(zone) if zone else None
+
+    def _physical_is_off(self, zone: Zone) -> bool:
+        state = self.hass.states.get(zone.climate_entity)
+        if state is None:
+            return True
+        mode = state.attributes.get("hvac_mode", state.state)
+        return mode == "off" or state.state == "off"
+
+    def _physical_hvac_mode(self, zone: Zone) -> str | None:
+        state = self.hass.states.get(zone.climate_entity)
+        if state is None:
             return None
+        return str(state.attributes.get("hvac_mode", state.state))
+
+    def _refresh_state_listeners(self) -> None:
+        for unsub in self._unsub_trackers:
+            unsub()
+        self._unsub_trackers.clear()
+        entities: list[str] = []
+        for zone in self.zones.values():
+            entities.append(zone.climate_entity)
+            if zone.temperature_sensor:
+                entities.append(zone.temperature_sensor)
+        if not entities:
+            return
+        self._unsub_trackers.append(
+            async_track_state_change_event(self.hass, entities, self._handle_state_change)
+        )
 
     async def _set_temperature(
         self, zone: Zone, target: float, now: datetime
@@ -455,46 +504,92 @@ class ThermoManager:
 
     @callback
     def _handle_state_change(self, event: Any) -> None:
-        """Handle climate state changes for manual override detection."""
+        """Sync auto scheduling with physical thermostat changes."""
         entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
-        if entity_id is None or new_state is None:
+        if entity_id is None:
             return
         zone = self._zone_for_climate(entity_id)
         if zone is None:
+            for z in self.zones.values():
+                if z.temperature_sensor == entity_id:
+                    zone = z
+                    break
+        if zone is None:
             return
-        if new_state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN, "off"}:
+        if new_state is None:
+            self._notify()
+            return
+        if entity_id == zone.climate_entity:
+            self._sync_power_from_physical(zone, old_state, new_state)
+        if entity_id != zone.climate_entity:
+            self._notify()
+            return
+        if new_state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
+            self._notify()
+            return
+        if self._physical_is_off(zone):
+            self._notify()
             return
         now = dt_util.now()
         ignore_until = self._ignore_until.get(zone.id)
         if ignore_until is not None and now < ignore_until:
+            self._notify()
             return
         if not self.enabled or zone.id in self.disabled_zones:
+            self._notify()
             return
         if active_bypass(self.bypasses.values(), zone.id, now) is not None:
+            self._notify()
             return
         new_temp = new_state.attributes.get("temperature")
         old_temp = old_state.attributes.get("temperature") if old_state else None
-        if new_temp is None or old_temp is None:
+        if new_temp is None:
+            self._notify()
             return
         try:
             new_temp = float(new_temp)
-            old_temp = float(old_temp)
+            old_temp = float(old_temp) if old_temp is not None else new_temp
         except (TypeError, ValueError):
+            self._notify()
             return
-        if abs(new_temp - old_temp) < 0.5:
+        if old_temp is not None and abs(new_temp - old_temp) < 0.5:
+            self._notify()
             return
+        pinned = self.is_pinned(zone.id)
         hold_minutes = self.settings["manual_hold"]
-        if hold_minutes <= 0:
+        if pinned:
+            until = None
+        elif hold_minutes > 0:
+            until = now + timedelta(minutes=hold_minutes)
+        else:
+            self._notify()
             return
-        until = now + timedelta(minutes=hold_minutes)
         self.manual_overrides[zone.id] = {"temperature": new_temp, "until": until}
         self._fire(
             EVENT_MANUAL_OVERRIDE,
-            {ATTR_ZONE_ID: zone.id, ATTR_TARGET: new_temp, "until": until.isoformat()},
+            {ATTR_ZONE_ID: zone.id, ATTR_TARGET: new_temp, "until": until.isoformat() if until else None},
         )
         self._save()
+        self._notify()
+
+    def _sync_power_from_physical(self, zone: Zone, old_state: Any, new_state: Any) -> None:
+        """When the physical device is powered off, pause HA Thermo scheduling."""
+        old_mode = (
+            (old_state.attributes.get("hvac_mode") or old_state.state) if old_state else None
+        )
+        new_mode = new_state.attributes.get("hvac_mode", new_state.state)
+        turned_off = new_mode == "off" or new_state.state == "off"
+        turned_on = not turned_off and (old_mode == "off" or (old_state and old_state.state == "off"))
+        if turned_off and zone.id not in self.disabled_zones:
+            if old_mode and old_mode not in ("off", STATE_UNKNOWN, STATE_UNAVAILABLE):
+                self._paused_hvac[zone.id] = str(old_mode)
+            self.disabled_zones.add(zone.id)
+            self._save()
+        elif turned_on and zone.id in self.disabled_zones:
+            self.disabled_zones.discard(zone.id)
+            self._save()
 
     def _zone_for_climate(self, entity_id: str) -> Zone | None:
         """Find zone by climate entity."""
@@ -603,6 +698,7 @@ class ThermoManager:
         self.hass.config_entries.async_update_entry(self.entry, options=options)
         self._sync_zones()
         self._save()
+        self._refresh_state_listeners()
         self._notify()
         return self.zones[zone.id]
 
@@ -790,19 +886,57 @@ class ThermoManager:
         temperature: float | None = None,
         duration: Any = None,
     ) -> None:
-        """Set a temporary temperature override."""
+        """Apply setpoint to the physical climate and optional timed override."""
         zone_ids = await self.async_resolve_zone_ids(thermostats)
         if temperature is None:
             raise ValueError("temperature_required")
         minutes = parse_duration_minutes(duration)
         now = dt_util.now()
-        until = now + timedelta(minutes=minutes) if minutes else None
+        temp = float(temperature)
         for zone_id in zone_ids:
+            zone = self.zones[zone_id]
+            clamped = zone.clamp(temp)
+            await self._set_temperature(zone, clamped, now)
+            pinned = self.is_pinned(zone_id)
+            if minutes:
+                until = now + timedelta(minutes=minutes)
+            elif pinned:
+                until = None
+            elif self.settings["manual_hold"] > 0:
+                until = now + timedelta(minutes=self.settings["manual_hold"])
+            else:
+                continue
             self.manual_overrides[zone_id] = {
-                "temperature": temperature,
+                "temperature": clamped,
                 "until": until,
             }
-        self._save()
+        await self.async_persist_now()
+        self._notify()
+
+    async def async_set_power(
+        self, enabled: bool, thermostats: list[str] | None = None
+    ) -> None:
+        """Turn the physical thermostat off/on and pause/resume automatic control."""
+        zone_ids = await self.async_resolve_zone_ids(thermostats)
+        for zone_id in zone_ids:
+            zone = self.zones[zone_id]
+            state = self.hass.states.get(zone.climate_entity)
+            if not enabled:
+                mode = self._physical_hvac_mode(zone)
+                if mode and mode not in ("off", STATE_UNAVAILABLE, STATE_UNKNOWN):
+                    self._paused_hvac[zone_id] = mode
+                await self._set_hvac_mode(zone, "off")
+                self.disabled_zones.add(zone_id)
+            else:
+                self.disabled_zones.discard(zone_id)
+                restore = self._paused_hvac.pop(zone_id, None) or "heat"
+                await self._set_hvac_mode(zone, restore)
+        await self.async_persist_now()
+        self._notify()
+
+    async def async_set_physical_hvac_mode(self, zone: Zone, mode: str) -> None:
+        """Set HVAC mode on the physical entity only (no auto pause)."""
+        await self._set_hvac_mode(zone, mode)
         self._notify()
 
     async def async_enable(
@@ -1121,7 +1255,8 @@ class ThermoManager:
             "max_temp": zone.max_temp,
             "default_temp": zone.default_temp,
             "current_temperature": self.current_temperature(zone),
-            "target_temperature": self.target_temperature(zone.id),
+            "target_temperature": self.physical_setpoint(zone.id)
+            or self.target_temperature(zone.id),
             "active_profile": self.active_profile_id(zone.id),
             "active_profile_name": self.active_profile_name(zone.id),
             "pinned": self.is_pinned(zone.id),

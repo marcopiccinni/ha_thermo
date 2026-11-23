@@ -124,6 +124,9 @@
     },
     "switch": {
       "enabled": {"name": "Auto control"}
+    },
+    "climate": {
+      "thermostat": {"name": "Thermostat"}
     }
   },
   "services": {

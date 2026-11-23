@@ -113,7 +113,9 @@ class ZoneTargetTemperature(_ZoneSensor):
 
     @property
     def native_value(self) -> float | None:
-        value = self.manager.target_temperature(self.zone.id)
+        value = self.manager.physical_setpoint(self.zone.id)
+        if value is None:
+            value = self.manager.target_temperature(self.zone.id)
         return round(value, 2) if value is not None else None
 
     @property

@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.4.10";
+export const INTEGRATION_VERSION = "0.4.11";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -257,6 +257,18 @@ export const deviceClimateReadout = (hass, climateEntityId) => {
     current: liveClimateValue(hass, climateEntityId, "current"),
     target: liveClimateValue(hass, climateEntityId, "target"),
   };
+};
+
+/** Current from optional room sensor + setpoint from physical climate. */
+export const zoneClimateReadout = (hass, zone, climateEntityId) => {
+  const physical = deviceClimateReadout(hass, climateEntityId);
+  let current = physical.current;
+  const sid = zone?.temperature_sensor;
+  if (sid && hass?.states?.[sid]) {
+    const v = parseFloat(hass.states[sid].state);
+    if (!Number.isNaN(v)) current = v;
+  }
+  return { current, target: physical.target };
 };
 
 export const normalizeHistoryStates = (states) => {

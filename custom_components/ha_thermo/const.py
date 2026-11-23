@@ -44,6 +44,7 @@ ENTITY_BYPASS_ACTIVE: Final = "bypass_active"
 ENTITY_OVERRIDE_ACTIVE: Final = "override_active"
 ENTITY_PROFILE: Final = "profile"
 ENTITY_ENABLED: Final = "enabled"
+ENTITY_THERMOSTAT: Final = "thermostat"
 
 # Events
 EVENT_PROFILE_CHANGED: Final = f"{DOMAIN}_profile_changed"

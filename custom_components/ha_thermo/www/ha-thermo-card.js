@@ -18,7 +18,7 @@ import {
   fetchRecorderHistory,
   buildClimateHistorySeries,
   resolvePhysicalClimateEntity,
-  deviceClimateReadout,
+  zoneClimateReadout,
   renderHistoryChartBlock,
   wireHistoryChartUI,
   yDomainHistory,
@@ -29,7 +29,7 @@ import {
   clampChartHeight,
   measureHistoryChartHost,
   unbindHistoryChartResize,
-} from "./ha-thermo-common.js?v=0.4.10";
+} from "./ha-thermo-common.js?v=0.4.11";
 
 class HaThermoCard extends HTMLElement {
   constructor() {
@@ -178,7 +178,13 @@ class HaThermoCard extends HTMLElement {
       const unsub = await this._hass.connection.subscribeEvents((ev) => {
         const zone = this._zone();
         const climateId = resolvePhysicalClimateEntity(this._hass, zone, this._config);
-        if (zone && ev?.data?.entity_id === climateId) this._onLiveClimateUpdate(ev);
+        const eid = ev?.data?.entity_id;
+        if (!zone || !eid) return;
+        const watch = [climateId, zone.temperature_sensor].filter(Boolean);
+        if (!watch.includes(eid)) return;
+        if (eid === climateId) this._onLiveClimateUpdate(ev);
+        this._refreshTempsUI(zone, climateId);
+        if (eid === climateId) this._refreshPowerButton(climateId);
       }, "state_changed");
       this._unsubs.push(unsub);
     } catch (e) {}
@@ -265,14 +271,28 @@ class HaThermoCard extends HTMLElement {
     });
   }
 
-  _updateTempReadout(zone, climateId) {
-    const ro = deviceClimateReadout(this._hass, climateId);
-    const ambient = this.shadowRoot?.querySelector(".temp-readonly .ambient, .temp-display");
-    const setpoint = this.shadowRoot?.querySelector(".temp-readonly .setpoint");
+  _refreshTempsUI(zone, climateId) {
+    if (!zone || !climateId) return;
+    const ro = zoneClimateReadout(this._hass, zone, climateId);
+    const cur = this.shadowRoot?.querySelector("[data-temp='current']");
+    const tgt = this.shadowRoot?.querySelector("[data-temp='target']");
     const slider = this.shadowRoot?.querySelector("input[data-action='slider']");
-    if (ambient && ro.current != null) ambient.textContent = formatTemp(ro.current);
-    if (setpoint && ro.target != null) setpoint.textContent = `${formatTemp(ro.target)} setpoint`;
+    if (cur && ro.current != null) cur.textContent = formatTemp(ro.current);
+    if (tgt && ro.target != null) tgt.textContent = formatTemp(ro.target);
     if (slider && ro.target != null) slider.value = ro.target;
+  }
+
+  _refreshPowerButton(climateId) {
+    const btn = this.shadowRoot?.querySelector("button[data-action='power']");
+    if (!btn || !climateId) return;
+    const off = this._climateIsOff(climateId);
+    btn.classList.toggle("active", !off);
+    btn.textContent = off ? "Off" : "On";
+    btn.title = off ? "Accendi" : "Spegni";
+  }
+
+  _updateTempReadout(zone, climateId) {
+    this._refreshTempsUI(zone, climateId);
   }
 
   async _ensureHistoryStream(climateId, hours) {
@@ -380,24 +400,23 @@ class HaThermoCard extends HTMLElement {
 
   _tempBlock(zone, cfg, disabled, manual) {
     const climateId = this._climatePlotId(zone);
-    const ro = deviceClimateReadout(this._hass, climateId);
+    const ro = zoneClimateReadout(this._hass, zone, climateId);
     const current = ro.current ?? zone?.current_temperature;
     const target = ro.target ?? zone?.target_temperature;
+    const temps = `
+      <div class="temps">
+        <div class="temp-chip"><span class="lbl">Attuale</span><span class="val" data-temp="current">${formatTemp(current)}</span></div>
+        <div class="temp-chip"><span class="lbl">Impostata</span><span class="val" data-temp="target">${formatTemp(target)}</span></div>
+      </div>`;
     if (manual && cfg.show_slider !== false) {
-      return `
+      return `${temps}
         <div class="slider-row">
           <button type="button" data-action="down" ${disabled ? "disabled" : ""}>−</button>
           <input type="range" min="${zone.min_temp}" max="${zone.max_temp}" step="0.5" value="${target ?? 20}" data-action="slider" ${disabled ? "disabled" : ""}>
           <button type="button" data-action="up" ${disabled ? "disabled" : ""}>+</button>
-        </div>
-        <div class="temp-display">${formatTemp(current)} <span class="target">→ ${formatTemp(target)}</span></div>`;
-    }
-    return `
-        <div class="temp-readonly">
-          <span class="ambient">${formatTemp(current)}</span>
-          <span class="sep">·</span>
-          <span class="setpoint">${formatTemp(target)} setpoint</span>
         </div>`;
+    }
+    return temps;
   }
 
   _render() {
@@ -448,6 +467,10 @@ class HaThermoCard extends HTMLElement {
       .title{font-weight:600}
       .sub{font-size:0.8rem;color:var(--secondary-text-color)}
       .controls{display:grid;gap:10px;margin-top:10px}
+      .temps{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0}
+      .temp-chip{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 8px;border-radius:10px;background:var(--secondary-background-color,rgba(0,0,0,.04));border:1px solid var(--divider-color)}
+      .temp-chip .lbl{font-size:0.72rem;color:var(--secondary-text-color);text-transform:uppercase;letter-spacing:.03em}
+      .temp-chip .val{font-size:1.35rem;font-weight:600;line-height:1.2}
       .profile-row{display:grid;gap:4px}
       .profile-label{display:grid;gap:4px;font-size:0.85rem}
       .profile-label select{padding:6px 8px;border-radius:6px;border:1px solid var(--divider-color);font:inherit;background:var(--card-background-color,#fff)}
@@ -519,33 +542,15 @@ class HaThermoCard extends HTMLElement {
 
   async _toggleClimatePower(zone) {
     if (!this._hass || !zone) return;
-    const eid = this._climatePlotId(zone);
-    if (!eid) return;
-    const off = this._climateIsOff(eid);
-    try {
-      if (off) {
-        try {
-          await this._hass.callService("climate", "turn_on", { entity_id: eid });
-        } catch (e1) {
-          const mode = this._prevHvacMode || "heat";
-          await this._hass.callService("climate", "set_hvac_mode", { entity_id: eid, hvac_mode: mode });
-        }
-        this._toast("Acceso");
-      } else {
-        const st = this._hass.states[eid];
-        const mode = st?.attributes?.hvac_mode;
-        if (mode && mode !== "off") this._prevHvacMode = mode;
-        try {
-          await this._hass.callService("climate", "turn_off", { entity_id: eid });
-        } catch (e1) {
-          await this._hass.callService("climate", "set_hvac_mode", { entity_id: eid, hvac_mode: "off" });
-        }
-        this._toast("Spento");
-      }
-      await this._load();
-    } catch (e) {
-      this._toast(e?.message || String(e), true);
-    }
+    const off = this._climateIsOff(this._climatePlotId(zone));
+    await this._call(
+      {
+        type: `${DOMAIN}/thermostat/power`,
+        enabled: off,
+        thermostats: [this._thermostatTarget()],
+      },
+      off ? "Acceso" : "Spento",
+    );
   }
 
   _onChange(e) {
