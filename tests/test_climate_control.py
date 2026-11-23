@@ -69,10 +69,10 @@ async def test_set_power_on_restores_hvac(manager: ThermoManager) -> None:
 @pytest.mark.asyncio
 async def test_set_temperature_writes_physical_climate(manager: ThermoManager) -> None:
     manager._set_temperature = AsyncMock()
-    await manager.async_set_profile("comfort", ["climate.sala"])
     await manager.async_set_temperature(["climate.sala"], 22.5)
     manager._set_temperature.assert_awaited()
-    assert manager.manual_overrides["z1"]["temperature"] == 22.5
+    assert manager.is_manual_mode("z1")
+    assert "z1" not in manager.manual_overrides
 
 
 @pytest.mark.asyncio
@@ -89,6 +89,7 @@ async def test_apply_zone_skips_when_power_off(manager: ThermoManager) -> None:
 @pytest.mark.asyncio
 async def test_external_setpoint_override_in_auto(manager: ThermoManager, hass: HomeAssistant) -> None:
     manager.settings["manual_hold"] = 30
+    manager.control_modes["z1"] = "auto"
     old = hass.states.get("climate.sala")
     hass.states.async_set(
         "climate.sala",

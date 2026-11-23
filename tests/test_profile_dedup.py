@@ -26,8 +26,7 @@ def test_apply_repoints_weekly():
     }
     weekly = {"z1": {"mon": "eco_mon", "tue": "eco"}}
     active = {"z1": "eco_mon"}
-    pinned: dict = {}
-    merge = apply_profile_merge(profiles, weekly, active, pinned)
+    merge = apply_profile_merge(profiles, weekly, active)
     assert merge["eco_mon"] == "eco"
     assert "eco_mon" not in profiles
     assert weekly["z1"]["mon"] == "eco"

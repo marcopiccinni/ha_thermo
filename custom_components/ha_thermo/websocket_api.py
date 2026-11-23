@@ -78,14 +78,13 @@ async def ws_get_config(
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{DOMAIN}/set_profile",
-        vol.Required("profile"): vol.Any(cv.string, vol.Equal("__auto__")),
+        vol.Required("type"): f"{DOMAIN}/thermostat/mode",
+        vol.Required("mode"): vol.In(["auto", "manual"]),
         **_THERMOSTATS_WS,
-        _DURATION: _DURATION_SCHEMA,
     }
 )
 @websocket_api.async_response
-async def ws_set_profile(
+async def ws_set_control_mode(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict,
@@ -96,8 +95,8 @@ async def ws_set_profile(
     await _execute(
         connection,
         msg,
-        lambda: manager.async_set_profile(
-            msg["profile"], thermostats_from_payload(msg), msg.get("duration")
+        lambda: manager.async_set_control_mode(
+            msg["mode"], thermostats_from_payload(msg)
         ),
     )
 
@@ -494,7 +493,7 @@ async def ws_import_profiles(
 
 COMMANDS = (
     ws_get_config,
-    ws_set_profile,
+    ws_set_control_mode,
     ws_start_bypass,
     ws_stop_bypass,
     ws_set_temperature,

@@ -21,6 +21,7 @@ from .const import (
     ATTR_UNTIL,
     ATTR_ZONES,
     DOMAIN,
+    PROFILE_AUTO,
     SERVICE_CLONE_PROFILE,
     SERVICE_CREATE_PROFILE,
     SERVICE_DELETE_PROFILE,
@@ -113,11 +114,16 @@ def _guarded(handler: Any) -> Any:
 
 def async_register_services(hass: HomeAssistant) -> None:
     async def set_profile(call: ServiceCall) -> None:
-        await _manager(hass).async_set_profile(
-            call.data[ATTR_PROFILE],
-            thermostats_from_payload(call.data),
-            call.data.get(ATTR_DURATION),
-        )
+        profile = call.data[ATTR_PROFILE]
+        thermostats = thermostats_from_payload(call.data)
+        if profile == PROFILE_AUTO:
+            from .const import CONTROL_MODE_AUTO
+
+            await _manager(hass).async_set_control_mode(CONTROL_MODE_AUTO, thermostats)
+        else:
+            await _manager(hass).async_set_profile(
+                profile, thermostats, call.data.get(ATTR_DURATION)
+            )
 
     async def start_bypass(call: ServiceCall) -> None:
         await _manager(hass).async_start_bypass(

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.12
+
+- **Modello semplificato**: **Automatico** = profilo del giorno/ora dalla pianificazione settimanale (editor Lovelace); **Manuale** = solo setpoint fisico (`set_temperature`), senza profilo; **Off** invariato (v0.4.11).
+- Rimossi pin profilo, menu profilo sulla card, entità `select` profilo e WebSocket `set_profile` (sostituito da `thermostat/mode`). Migrazione storage schema 3: pin legacy → modalità Manuale.
+- In Automatico, modifica setpoint esterna resta un override temporaneo (`manual_hold`, default 30 min). Card: grafico, temperature, slider solo in Manuale, Automatico/Manuale, On/Off.
+- Servizio `ha_thermo.set_profile` accetta solo `__auto__` (torna Automatico); gli altri id profilo restituiscono errore.
+- Test: `tests/test_control_mode.py`.
+
 ## 0.4.11
 
 - **On/Off**: comando sul `climate` fisico (`set_hvac_mode: off` / ripristino modalità salvata) e sospensione controllo automatico (`disabled_zones` + `paused_hvac_modes` in storage). Il tick non riscrive più modalità/temperatura quando il termostato è spento. WebSocket `thermostat/power`.

@@ -109,6 +109,9 @@ ATTR_SOURCE_ID: Final = "source_id"
 # Profile constants
 PROFILE_AUTO: Final = "__auto__"
 PROFILE_AUTO_LABEL: Final = "Auto"
+
+CONTROL_MODE_AUTO: Final = "auto"
+CONTROL_MODE_MANUAL: Final = "manual"
 PROFILE_ICON: Final = "mdi:home-thermometer"
 
 HUB_ZONE_ID: Final = "hub"

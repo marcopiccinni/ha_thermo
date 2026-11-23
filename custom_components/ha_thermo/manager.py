@@ -43,6 +43,8 @@ from .const import (
     EVENT_PROFILES_CHANGED,
     EVENT_TARGET_CHANGED,
     EVENT_ZONE_SCHEDULE_CHANGED,
+    CONTROL_MODE_AUTO,
+    CONTROL_MODE_MANUAL,
     PROFILE_AUTO,
     STORAGE_KEY,
     STORAGE_VERSION,
@@ -72,7 +74,7 @@ class ThermoManager:
         self.bypasses: dict[str, Bypass] = {}
         self.active_profiles: dict[str, str] = {}
         self.weekly_profiles: dict[str, dict[str, str]] = {}
-        self.pinned_profiles: dict[str, dict[str, Any]] = {}
+        self.control_modes: dict[str, str] = {}
         self.manual_overrides: dict[str, dict[str, Any]] = {}
         self.disabled_zones: set[str] = set()
         self.effective_targets: dict[str, float | None] = {}
@@ -97,7 +99,6 @@ class ThermoManager:
             self.profiles,
             self.weekly_profiles,
             self.active_profiles,
-            self.pinned_profiles,
         )
         self._save()
         self._refresh_state_listeners()
@@ -145,17 +146,13 @@ class ThermoManager:
             str(zone): str(profile)
             for zone, profile in (raw.get("active_profiles") or {}).items()
         }
-        self.pinned_profiles = {}
-        for zone_id, pin in (raw.get("pinned_profiles") or {}).items():
-            if not isinstance(pin, dict):
-                continue
-            profile_id = pin.get("profile_id")
-            if not profile_id:
-                continue
-            self.pinned_profiles[str(zone_id)] = {
-                "profile_id": str(profile_id),
-                "until": _parse_datetime(pin.get("until")),
-            }
+        self.control_modes = {}
+        for zone_id, mode in (raw.get("control_modes") or {}).items():
+            mode_key = str(mode)
+            if mode_key in (CONTROL_MODE_AUTO, CONTROL_MODE_MANUAL):
+                self.control_modes[str(zone_id)] = mode_key
+        for zone_id in (raw.get("pinned_profiles") or {}):
+            self.control_modes.setdefault(str(zone_id), CONTROL_MODE_MANUAL)
         self._paused_hvac = {
             str(zone_id): str(mode)
             for zone_id, mode in (raw.get("paused_hvac_modes") or {}).items()
@@ -230,7 +227,7 @@ class ThermoManager:
                 self.zones.pop(zone_id, None)
                 self.active_profiles.pop(zone_id, None)
                 self.weekly_profiles.pop(zone_id, None)
-                self.pinned_profiles.pop(zone_id, None)
+                self.control_modes.pop(zone_id, None)
                 self.manual_overrides.pop(zone_id, None)
                 self.disabled_zones.discard(zone_id)
                 self._paused_hvac.pop(zone_id, None)
@@ -238,6 +235,9 @@ class ThermoManager:
             if zone_id not in self.zones:
                 self.zones[zone_id] = zone
                 self._ensure_weekly_schedule(zone_id)
+                self.control_modes.setdefault(zone_id, CONTROL_MODE_AUTO)
+        for zone_id in self.zones:
+            self.control_modes.setdefault(zone_id, CONTROL_MODE_AUTO)
         self.zones = current
 
     def _storage_payload(self) -> dict[str, Any]:
@@ -256,7 +256,7 @@ class ThermoManager:
                 for zone_id, schedule in self.weekly_profiles.items()
             },
             "active_profiles": dict(self.active_profiles),
-            "pinned_profiles": self._serialize_pins(),
+            "control_modes": dict(self.control_modes),
             "manual_overrides": self._serialize_overrides(),
             "paused_hvac_modes": dict(self._paused_hvac),
         }
@@ -269,16 +269,6 @@ class ThermoManager:
     async def async_persist_now(self) -> None:
         """Write storage immediately (profile pin and user-driven state)."""
         await self._store.async_save(self._storage_payload())
-
-    def _serialize_pins(self) -> dict[str, dict[str, Any]]:
-        result: dict[str, dict[str, Any]] = {}
-        for zone_id, pin in self.pinned_profiles.items():
-            until = pin.get("until")
-            result[zone_id] = {
-                "profile_id": pin.get("profile_id"),
-                "until": until.isoformat() if isinstance(until, datetime) else None,
-            }
-        return result
 
     def _serialize_overrides(self) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
@@ -301,11 +291,6 @@ class ThermoManager:
                     EVENT_BYPASS_ENDED,
                     {ATTR_BYPASS: bypass.to_dict(), ATTR_ZONES: bypass.zones},
                 )
-        for zone_id, pin in list(self.pinned_profiles.items()):
-            until = pin.get("until")
-            if isinstance(until, datetime) and until <= now:
-                self.pinned_profiles.pop(zone_id, None)
-                changed = True
         for zone_id, override in list(self.manual_overrides.items()):
             until = override.get("until")
             if not isinstance(until, datetime) or until <= now:
@@ -314,15 +299,7 @@ class ThermoManager:
         return changed
 
     def _resolve_profile(self, zone_id: str, now: datetime) -> str | None:
-        """Resolve the active profile for a zone."""
-        pin = self.pinned_profiles.get(zone_id)
-        if pin:
-            profile_id = pin.get("profile_id")
-            if profile_id in self.profiles:
-                until = pin.get("until")
-                if not isinstance(until, datetime) or until > now:
-                    return profile_id
-                self.pinned_profiles.pop(zone_id, None)
+        """Resolve the active profile for a zone (weekly schedule only)."""
         scheduled = self._scheduled_profile_id(zone_id, now)
         if scheduled in self.profiles:
             return scheduled
@@ -353,6 +330,8 @@ class ThermoManager:
     async def _apply_zone(self, zone: Zone, now: datetime) -> None:
         """Apply target to a single zone."""
         if zone.id in self.disabled_zones or self._physical_is_off(zone):
+            return
+        if self.is_manual_mode(zone.id):
             return
         target, source = self._effective_target(zone, now)
         if target is not None:
@@ -557,15 +536,14 @@ class ThermoManager:
         if old_temp is not None and abs(new_temp - old_temp) < 0.5:
             self._notify()
             return
-        pinned = self.is_pinned(zone.id)
-        hold_minutes = self.settings["manual_hold"]
-        if pinned:
-            until = None
-        elif hold_minutes > 0:
-            until = now + timedelta(minutes=hold_minutes)
-        else:
+        if self.is_manual_mode(zone.id):
             self._notify()
             return
+        hold_minutes = self.settings["manual_hold"]
+        if hold_minutes <= 0:
+            self._notify()
+            return
+        until = now + timedelta(minutes=hold_minutes)
         self.manual_overrides[zone.id] = {"temperature": new_temp, "until": until}
         self._fire(
             EVENT_MANUAL_OVERRIDE,
@@ -671,6 +649,18 @@ class ThermoManager:
 
         for zone_id in self.zones:
             self._ensure_weekly_schedule(zone_id)
+        schema = int(raw.get("schema_version", 1))
+        if schema < 3 or raw.get("pinned_profiles"):
+            for zone_id in self.zones:
+                self.control_modes.setdefault(zone_id, CONTROL_MODE_AUTO)
+            for zone_id in (raw.get("pinned_profiles") or {}):
+                if str(zone_id) in self.zones:
+                    self.control_modes[str(zone_id)] = CONTROL_MODE_MANUAL
+            if schema < 3:
+                _LOGGER.info(
+                    "Migrated HA Thermo storage to schema 3 "
+                    "(modalità auto/manuale, pin profilo rimossi)"
+                )
 
     async def async_ensure_zone_for_climate(self, entity_id: str) -> Zone:
         """Register a physical climate entity with HA Thermo on first use."""
@@ -752,15 +742,40 @@ class ThermoManager:
             if day not in current or current[day] not in self.profiles:
                 current[day] = self._default_profile_id() or "comfort"
         self.weekly_profiles[zone_id] = current
-        if not self.is_pinned(zone_id):
-            now = dt_util.now()
-            resolved = self._resolve_profile(zone_id, now)
-            if resolved:
-                self.active_profiles[zone_id] = resolved
+        now = dt_util.now()
+        resolved = self._resolve_profile(zone_id, now)
+        if resolved:
+            self.active_profiles[zone_id] = resolved
         self._save()
         self._fire(EVENT_ZONE_SCHEDULE_CHANGED, {ATTR_ZONE_ID: zone_id})
         self._fire_profiles_changed()
         return dict(self.weekly_profiles[zone_id])
+
+    async def async_set_control_mode(
+        self,
+        mode: str,
+        thermostats: list[str] | None = None,
+    ) -> None:
+        """Switch between automatic (weekly profile) and manual (physical setpoint) control."""
+        mode_key = str(mode or "").strip().lower()
+        if mode_key not in (CONTROL_MODE_AUTO, CONTROL_MODE_MANUAL):
+            raise ValueError("invalid_control_mode")
+        zone_ids = await self.async_resolve_zone_ids(thermostats)
+        now = dt_util.now()
+        for zone_id in zone_ids:
+            self.control_modes[zone_id] = mode_key
+            if mode_key == CONTROL_MODE_AUTO:
+                self.manual_overrides.pop(zone_id, None)
+                resolved = self._resolve_profile(zone_id, now)
+                if resolved:
+                    self.active_profiles[zone_id] = resolved
+            else:
+                self._applied_mode.pop(zone_id, None)
+        await self.async_persist_now()
+        self._notify()
+        for zone_id in zone_ids:
+            if mode_key == CONTROL_MODE_AUTO:
+                await self._apply_zone(self.zones[zone_id], now)
 
     async def async_set_profile(
         self,
@@ -768,46 +783,10 @@ class ThermoManager:
         thermostats: list[str] | None = None,
         duration: Any = None,
     ) -> None:
-        """Pin a profile on one or more thermostats."""
-        zone_ids = await self.async_resolve_zone_ids(thermostats)
-        if profile_id == PROFILE_AUTO:
-            for zone_id in zone_ids:
-                self.pinned_profiles.pop(zone_id, None)
-                now = dt_util.now()
-                resolved = self._resolve_profile(zone_id, now)
-                if resolved:
-                    self.active_profiles[zone_id] = resolved
-            await self.async_persist_now()
-            self._notify()
-            now = dt_util.now()
-            for zone_id in zone_ids:
-                await self._apply_zone(self.zones[zone_id], now)
-            return
-        if profile_id not in self.profiles:
-            raise ValueError("unknown_profile")
-        minutes = parse_duration_minutes(duration)
-        now = dt_util.now()
-        until = now + timedelta(minutes=minutes) if minutes else None
-        profile = self.profiles[profile_id]
-        for zone_id in zone_ids:
-            self.pinned_profiles[zone_id] = {"profile_id": profile_id, "until": until}
-            self.active_profiles[zone_id] = profile_id
-            self.manual_overrides.pop(zone_id, None)
-            self._applied_mode.pop(zone_id, None)
-            self._fire(
-                EVENT_PROFILE_CHANGED,
-                {
-                    ATTR_ZONE_ID: zone_id,
-                    ATTR_PROFILE_ID: profile_id,
-                    ATTR_PROFILE_NAME: profile.name,
-                    ATTR_SOURCE: "manual",
-                },
-            )
-        await self.async_persist_now()
-        self._notify()
-        now = dt_util.now()
-        for zone_id in zone_ids:
-            await self._apply_zone(self.zones[zone_id], now)
+        """Deprecated: only __auto__ switches back to automatic control."""
+        if profile_id != PROFILE_AUTO:
+            raise ValueError("set_profile_deprecated")
+        await self.async_set_control_mode(CONTROL_MODE_AUTO, thermostats)
 
     async def async_start_bypass(
         self,
@@ -886,30 +865,19 @@ class ThermoManager:
         temperature: float | None = None,
         duration: Any = None,
     ) -> None:
-        """Apply setpoint to the physical climate and optional timed override."""
+        """Write setpoint to the physical climate (enters manual control)."""
+        del duration
         zone_ids = await self.async_resolve_zone_ids(thermostats)
         if temperature is None:
             raise ValueError("temperature_required")
-        minutes = parse_duration_minutes(duration)
         now = dt_util.now()
         temp = float(temperature)
         for zone_id in zone_ids:
             zone = self.zones[zone_id]
+            self.control_modes[zone_id] = CONTROL_MODE_MANUAL
             clamped = zone.clamp(temp)
             await self._set_temperature(zone, clamped, now)
-            pinned = self.is_pinned(zone_id)
-            if minutes:
-                until = now + timedelta(minutes=minutes)
-            elif pinned:
-                until = None
-            elif self.settings["manual_hold"] > 0:
-                until = now + timedelta(minutes=self.settings["manual_hold"])
-            else:
-                continue
-            self.manual_overrides[zone_id] = {
-                "temperature": clamped,
-                "until": until,
-            }
+            self.manual_overrides.pop(zone_id, None)
         await self.async_persist_now()
         self._notify()
 
@@ -996,10 +964,6 @@ class ThermoManager:
             raise ValueError("profile_last_one")
         affected: list[str] = []
         self.profiles.pop(profile_id)
-        for zone_id, pin in list(self.pinned_profiles.items()):
-            if pin.get("profile_id") == profile_id:
-                self.pinned_profiles.pop(zone_id, None)
-                affected.append(zone_id)
         for zone_id, schedule in self.weekly_profiles.items():
             changed = False
             for day in DAYS:
@@ -1132,12 +1096,7 @@ class ThermoManager:
         return self.effective_targets.get(zone_id)
 
     def active_profile_id(self, zone_id: str) -> str | None:
-        """Get active profile ID."""
-        pin = self.pinned_profiles.get(zone_id)
-        if pin and pin.get("profile_id") in self.profiles:
-            until = pin.get("until")
-            if not isinstance(until, datetime) or until > dt_util.now():
-                return str(pin["profile_id"])
+        """Get active profile ID (from weekly schedule in auto mode)."""
         return self.active_profiles.get(zone_id)
 
     def active_profile_name(self, zone_id: str) -> str | None:
@@ -1146,13 +1105,16 @@ class ThermoManager:
         profile = self.profiles.get(profile_id)
         return profile.name if profile else None
 
-    def is_pinned(self, zone_id: str) -> bool:
-        """Check if zone has pinned profile."""
-        return zone_id in self.pinned_profiles
+    def control_mode(self, zone_id: str) -> str:
+        """Automatic (weekly profile) or manual (physical setpoint)."""
+        return self.control_modes.get(zone_id, CONTROL_MODE_AUTO)
+
+    def is_manual_mode(self, zone_id: str) -> bool:
+        return self.control_mode(zone_id) == CONTROL_MODE_MANUAL
 
     def profile_source(self, zone_id: str) -> str:
         """Describe how the active profile is chosen."""
-        if self.is_pinned(zone_id):
+        if self.is_manual_mode(zone_id):
             return "manual"
         if self.bypass_for_zone(zone_id) is not None:
             return "bypass"
@@ -1219,10 +1181,7 @@ class ThermoManager:
                 for zone_id, schedule in self.weekly_profiles.items()
             },
             "active_profiles": dict(self.active_profiles),
-            "pinned_profiles": {
-                zone_id: pin.get("profile_id")
-                for zone_id, pin in self.pinned_profiles.items()
-            },
+            "control_modes": dict(self.control_modes),
             "manual_overrides": {
                 zone_id: {
                     "temperature": override.get("temperature"),
@@ -1259,7 +1218,8 @@ class ThermoManager:
             or self.target_temperature(zone.id),
             "active_profile": self.active_profile_id(zone.id),
             "active_profile_name": self.active_profile_name(zone.id),
-            "pinned": self.is_pinned(zone.id),
+            "control_mode": self.control_mode(zone.id),
+            "manual": self.is_manual_mode(zone.id),
             "bypass_active": self.bypass_for_zone(zone.id) is not None,
             "bypass_remaining": self.bypass_remaining(zone.id),
             "override_active": self.is_override_active(zone.id),
@@ -1336,7 +1296,6 @@ _ENTITY_DOMAINS = {
     "bypass_remaining": "sensor",
     "bypass_active": "binary_sensor",
     "override_active": "binary_sensor",
-    "profile": "select",
     "enabled": "switch",
 }
 

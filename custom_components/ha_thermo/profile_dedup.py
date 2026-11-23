@@ -115,7 +115,6 @@ def apply_profile_merge(
     profiles: dict[str, Profile],
     weekly_profiles: dict[str, dict[str, str]],
     active_profiles: dict[str, str],
-    pinned_profiles: dict[str, dict[str, object]],
 ) -> dict[str, str]:
     """Merge duplicates in place; returns merge map applied."""
     merge = build_profile_merge_map(profiles)
@@ -133,10 +132,6 @@ def apply_profile_merge(
 
     for zone_id, pid in list(active_profiles.items()):
         active_profiles[zone_id] = _remap(pid) or pid
-
-    for zone_id, pin in list(pinned_profiles.items()):
-        if isinstance(pin, dict) and pin.get("profile_id"):
-            pin["profile_id"] = _remap(str(pin["profile_id"])) or pin["profile_id"]
 
     removed: list[str] = []
     for old_id, new_id in merge.items():

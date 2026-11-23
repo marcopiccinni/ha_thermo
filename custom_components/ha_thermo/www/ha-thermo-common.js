@@ -1,5 +1,5 @@
 export const DOMAIN = "ha_thermo";
-export const INTEGRATION_VERSION = "0.4.11";
+export const INTEGRATION_VERSION = "0.4.12";
 export const EVENT_TYPES = [
   `${DOMAIN}_profile_changed`,
   `${DOMAIN}_bypass_started`,
@@ -123,17 +123,10 @@ export const profileOptions = (profiles, selected) =>
     .map((p) => `<option value="${esc(p.id)}" ${selected === p.id ? "selected" : ""}>${esc(p.name)}</option>`)
     .join("");
 
-/** Profile picker for card UI: Auto (follow weekly) + profiles. */
-export const profilePickerOptions = (profiles, selected) => {
-  const sel = String(selected ?? "__auto__");
-  let html = `<option value="__auto__" ${sel === "__auto__" ? "selected" : ""}>Automatico</option>`;
-  html += profileOptions(profiles, sel === "__auto__" ? "" : sel);
-  return html;
-};
-
-export const cardActiveProfileValue = (zone) => {
-  if (!zone) return "__auto__";
-  return zone.pinned ? zone.active_profile || "__auto__" : "__auto__";
+export const zoneIsManual = (zone) => {
+  if (!zone) return false;
+  if (zone.control_mode === "manual" || zone.manual === true) return true;
+  return false;
 };
 
 /** Ensure thermostat is linked and refresh integration snapshot for editors. */
