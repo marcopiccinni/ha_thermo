@@ -10,7 +10,11 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.core import HomeAssistant
 
-from custom_components.ha_thermo.const import CONF_ZONES, CONTROL_MODE_AUTO, CONTROL_MODE_MANUAL
+from custom_components.ha_thermo.const import (
+    CONF_ZONES,
+    CONTROL_MODE_AUTO,
+    CONTROL_MODE_MANUAL,
+)
 from custom_components.ha_thermo.manager import ThermoManager
 from custom_components.ha_thermo.models import Zone
 

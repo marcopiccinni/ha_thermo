@@ -8,16 +8,15 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Context, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .bypass import (
     active_bypass,
-    parse_duration_minutes,
     remaining_seconds,
     resolve_end,
 )
@@ -30,6 +29,8 @@ from .const import (
     ATTR_ZONE_ID,
     ATTR_ZONES,
     CONF_ZONES,
+    CONTROL_MODE_AUTO,
+    CONTROL_MODE_MANUAL,
     DAYS,
     DEFAULT_PROFILE_IDS,
     DEFAULT_REASSERT_INTERVAL,
@@ -42,8 +43,6 @@ from .const import (
     EVENT_PROFILES_CHANGED,
     EVENT_TARGET_CHANGED,
     EVENT_ZONE_SCHEDULE_CHANGED,
-    CONTROL_MODE_AUTO,
-    CONTROL_MODE_MANUAL,
     PROFILE_AUTO,
     STORAGE_KEY,
     STORAGE_VERSION,
@@ -862,7 +861,6 @@ class ThermoManager:
         zone_ids = await self.async_resolve_zone_ids(thermostats)
         for zone_id in zone_ids:
             zone = self.zones[zone_id]
-            state = self.hass.states.get(zone.climate_entity)
             if not enabled:
                 mode = self._physical_hvac_mode(zone)
                 if mode and mode not in ("off", STATE_UNAVAILABLE, STATE_UNKNOWN):
